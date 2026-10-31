@@ -179,6 +179,7 @@ fn statement() -> TaskHead {
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
+        resources: wire::ResourceRequirements::default(),
         project: "gate.selection".to_owned(),
         filing: wire::TaskFiling::Filed,
         priority: None,

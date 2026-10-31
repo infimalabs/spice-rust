@@ -27,6 +27,7 @@ pub(super) struct Surface<'a> {
     recovery: lane_recovery::Runtime,
     pub(super) config: &'a SurfaceConfig,
     reads: &'a CurrentReads,
+    resources: crate::board_command::resources::ResourceClaims,
     /// Retained session profiles a nudge scores, once message startup
     /// restores them.
     profiles: OnceLock<Arc<Mutex<message_surface::MessageState>>>,
@@ -52,9 +53,13 @@ impl<'a> Surface<'a> {
         runtimes: Runtimes<'a>,
         config: &'a SurfaceConfig,
         reads: &'a CurrentReads,
-    ) -> Self {
+    ) -> super::CommandResult<Self> {
         let Runtimes { lane, recovery } = runtimes;
-        Self {
+        let resources = crate::board_command::resources::ResourceClaims::new(
+            sill::LockTopology::new(repository.worktree_root(), &config.lock),
+        );
+        resources.restore(bus).map_err(Self::unit_outcome)?;
+        Ok(Self {
             bus,
             repository,
             paths,
@@ -63,7 +68,16 @@ impl<'a> Surface<'a> {
             recovery,
             config,
             reads,
+            resources,
             profiles: OnceLock::new(),
+        })
+    }
+
+    fn unit_outcome(outcome: Outcome<CommandAnswer>) -> Outcome<()> {
+        match outcome {
+            Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+            Outcome::Fault(fault) => Outcome::Fault(fault),
+            Outcome::Reply(_) => unreachable!("resource restoration failure returned a reply"),
         }
     }
 
@@ -135,7 +149,7 @@ impl<'a> Surface<'a> {
         seats: &mut Seats,
         command: &wire::AdmittedCommand,
     ) -> CommandDispatch {
-        if let Some(outcome) = crate::board_command::dispatch_with_repository(
+        if let Some(outcome) = crate::board_command::dispatch_with_resources(
             self.bus,
             command,
             Some(crate::command_client::Host {
@@ -144,7 +158,12 @@ impl<'a> Surface<'a> {
             }),
             &self.config.allocation,
             self.profiles.get().map(AsRef::as_ref),
+            Some(&self.resources),
         ) {
+            let outcome = match self.resources.restore(self.bus) {
+                Ok(()) => outcome,
+                Err(reconciliation) => reconciliation,
+            };
             return CommandDispatch::ordinary(outcome);
         }
         if let Some(dispatched) = self.dispatch_lane(seats, command) {

@@ -52,6 +52,7 @@ fn statement(name: &str, project: &str, queue_origin: u64) -> TaskHead {
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
+        resources: wire::ResourceRequirements::default(),
         project: project.to_owned(),
         filing: wire::TaskFiling::Filed,
         priority: None,

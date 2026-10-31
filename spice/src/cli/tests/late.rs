@@ -138,6 +138,42 @@ fn lifecycle_owner_controls_are_symmetric() {
     }
 }
 
+#[test]
+fn task_resource_maps_use_one_repeatable_spelling_at_creation_and_replacement() {
+    for argv in [
+        &[
+            "spice",
+            "task",
+            "add",
+            "Use shared hardware",
+            "--resource",
+            "windows-guest",
+            "--resource",
+            "gpu=2",
+        ][..],
+        &[
+            "spice",
+            "task",
+            "require",
+            "SPICE-example",
+            "--resource",
+            "windows-guest",
+            "--resource",
+            "gpu=2",
+        ][..],
+    ] {
+        let parsed = command()
+            .try_get_matches_from(argv)
+            .unwrap_or_else(|error| panic!("{argv:?} must parse: {error}"));
+        let resources = selected_matches(&parsed)
+            .get_many::<String>("resource")
+            .expect("resources remain repeated")
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(resources, ["windows-guest", "gpu=2"]);
+    }
+}
+
 /// Help rows are part of the syntax contract, not best-effort decorations.
 #[test]
 #[should_panic(expected = "names unregistered --foreground")]

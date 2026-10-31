@@ -27,6 +27,42 @@ fn journal_schema_requirements(
     Ok(wire::EnvironmentRequirements::one(requirement))
 }
 
+fn resource_pool_requirement(
+    written: &str,
+) -> Result<wire::EnvironmentRequirement, Outcome<CommandAnswer>> {
+    let (written_name, written_shards) = written.split_once('=').unwrap_or((written, "1"));
+    let name = written_name
+        .parse::<wire::ResourcePoolName>()
+        .map_err(|error| {
+            refusal(
+                "task::resource-name-invalid",
+                Some(written_name.to_owned()),
+                &error.to_string(),
+            )
+        })?;
+    let count = written_shards.parse::<u32>().map_err(|_| {
+        refusal(
+            "task::resource-shards-invalid",
+            Some(written_shards.to_owned()),
+            "name one canonical positive decimal shard count",
+        )
+    })?;
+    if count.to_string() != written_shards {
+        return Err(refusal(
+            "task::resource-shards-invalid",
+            Some(written_shards.to_owned()),
+            "name one canonical positive decimal shard count",
+        ));
+    }
+    wire::EnvironmentRequirement::resource_pool(name, count).map_err(|error| {
+        refusal(
+            "task::resource-shards-invalid",
+            Some(written_shards.to_owned()),
+            &error.to_string(),
+        )
+    })
+}
+
 pub(super) fn appliance_version(
     written: &str,
 ) -> Result<wire::manifest::ProductVersion, Outcome<CommandAnswer>> {
@@ -43,6 +79,7 @@ pub(super) fn environment_requirements(
     schema: Option<&str>,
     trust: Option<&str>,
     appliance: Option<wire::manifest::ProductVersion>,
+    resources: &[&str],
 ) -> Result<wire::EnvironmentRequirements, Outcome<CommandAnswer>> {
     let mut requirements = Vec::new();
     if let Some(written) = schema {
@@ -61,10 +98,23 @@ pub(super) fn environment_requirements(
     if let Some(version) = appliance {
         requirements.push(wire::EnvironmentRequirement::appliance_after(version));
     }
+    let mut declared = resources
+        .iter()
+        .map(|written| resource_pool_requirement(written))
+        .collect::<Result<Vec<_>, _>>()?;
+    declared.sort_by(|left, right| match (left, right) {
+        (
+            wire::EnvironmentRequirement::ResourcePool { name: left, .. },
+            wire::EnvironmentRequirement::ResourcePool { name: right, .. },
+        ) => left.cmp(right),
+        _ => unreachable!("resource parser returns resource requirements"),
+    });
+    requirements.extend(declared);
     wire::EnvironmentRequirements::new(requirements).map_err(|error| {
-        protocol_fault(
+        refusal(
             "task::requirements-noncanonical",
-            &format!("CLI assembled noncanonical environmental requirements: {error}"),
+            None,
+            &format!("resource declarations must be distinct: {error}"),
         )
     })
 }
@@ -100,17 +150,21 @@ pub(super) fn client_require(
         let appliance = matches
             .contains_id("appliance-after")
             .then(|| written.unwrap_or_else(|| board.appliance.clone()));
+        let resources = matches
+            .get_many::<String>("resource")
+            .map(|values| values.map(String::as_str).collect::<Vec<_>>())
+            .unwrap_or_default();
         let clear = matches.get_flag("clear");
-        let named = schema.is_some() || trust.is_some() || appliance.is_some();
-        let requirements = match (named, clear) {
-            (true, false) => wire::intent::TaskRequirementsEdit::Set {
-                requirements: environment_requirements(
-                    schema.map(String::as_str),
-                    trust.map(String::as_str),
-                    appliance,
-                )?,
-            },
-            (false, true) => wire::intent::TaskRequirementsEdit::Clear {},
+        let named =
+            schema.is_some() || trust.is_some() || appliance.is_some() || !resources.is_empty();
+        let mutable = match (named, clear) {
+            (true, false) => environment_requirements(
+                schema.map(String::as_str),
+                trust.map(String::as_str),
+                appliance,
+                &resources,
+            )?,
+            (false, true) => wire::EnvironmentRequirements::default(),
             (true, true) => {
                 return Err(refusal(
                     "task::require-shape",
@@ -122,9 +176,17 @@ pub(super) fn client_require(
                 return Err(refusal(
                     "task::require-shape",
                     None,
-                    "name --journal-schema SCHEMA, --trust-grant DIGEST, and/or \
-                     --appliance-after [VERSION] to replace requirements, or --clear to remove them",
+                    "name --journal-schema SCHEMA, --trust-grant DIGEST, \
+                     --appliance-after [VERSION], and/or --resource POOL[=COUNT] \
+                     to replace task requirements, or --clear to remove them",
                 ));
+            }
+        };
+        let requirements = if mutable.is_empty() {
+            wire::intent::TaskRequirementsEdit::Clear {}
+        } else {
+            wire::intent::TaskRequirementsEdit::Set {
+                requirements: mutable,
             }
         };
         Ok((
@@ -171,7 +233,7 @@ mod tests {
     #[test]
     fn trust_grant_cli_values_are_canonical_and_join_schema_in_fact_order() {
         let digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let requirements = environment_requirements(Some("18"), Some(digest), None)
+        let requirements = environment_requirements(Some("18"), Some(digest), None, &[])
             .expect("canonical conjunction");
         assert!(matches!(
             requirements.as_slice(),
@@ -187,7 +249,7 @@ mod tests {
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         ] {
-            let outcome = environment_requirements(None, Some(refused), None)
+            let outcome = environment_requirements(None, Some(refused), None, &[])
                 .expect_err("noncanonical digest refuses");
             assert!(matches!(
                 outcome,
@@ -195,6 +257,36 @@ mod tests {
                     if refusal.reason() == "task::trust-grant-invalid"
             ));
         }
+    }
+    #[test]
+    fn resource_pool_cli_values_are_canonical_and_positive() {
+        let requirements =
+            environment_requirements(None, None, None, &["windows-guest", "emulator=2"])
+                .expect("canonical resource requirements");
+        let resources = requirements.compiled_resources();
+        let actual = resources
+            .iter()
+            .map(|(name, shards)| (name.as_str(), shards))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, [("emulator", 2), ("windows-guest", 1)]);
+
+        for refused in [
+            "../guest",
+            "windows-guest=0",
+            "windows-guest=02",
+            "windows-guest=",
+            "=1",
+        ] {
+            assert!(
+                environment_requirements(None, None, None, &[refused]).is_err(),
+                "{refused:?} must refuse"
+            );
+        }
+        assert!(
+            environment_requirements(None, None, None, &["windows-guest", "windows-guest=2"],)
+                .is_err(),
+            "duplicate pools must refuse"
+        );
     }
 
     #[test]

@@ -730,7 +730,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "task add TITLE [--pitch TEXT] [--project PROJECT] [--description DESCRIPTION] \
          [--acceptance ACCEPTANCE...] [--flow PHASES] [--depends HANDLE...] [--intent INTENT] [--preparation HANDLE] \
          [--requires-journal-schema SCHEMA] [--requires-trust-grant DIGEST] \
-         [--origin ORIGIN] [--claim] [--draft]",
+         [--resource RESOURCE...] [--origin ORIGIN] [--claim] [--draft]",
         OperatorOrLane,
         Command,
         [TaskAdded, TaskEdited, ClaimWon],
@@ -744,7 +744,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "task plan TITLE [--pitch TEXT] [--project PROJECT] [--description DESCRIPTION] \
          [--acceptance ACCEPTANCE...] [--flow PHASES] [--depends HANDLE...] [--preparation HANDLE] \
          [--requires-journal-schema SCHEMA] [--requires-trust-grant DIGEST] \
-         [--origin ORIGIN] [--claim] [--draft]",
+         [--resource RESOURCE...] [--origin ORIGIN] [--claim] [--draft]",
         OperatorOrLane,
         Command,
         [TaskAdded, TaskEdited, ClaimWon],
@@ -758,7 +758,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "task design TITLE [--pitch TEXT] [--project PROJECT] [--description DESCRIPTION] \
          [--acceptance ACCEPTANCE...] [--flow PHASES] [--depends HANDLE...] [--preparation HANDLE] \
          [--requires-journal-schema SCHEMA] [--requires-trust-grant DIGEST] \
-         [--origin ORIGIN] [--claim] [--draft]",
+         [--resource RESOURCE...] [--origin ORIGIN] [--claim] [--draft]",
         OperatorOrLane,
         Command,
         [TaskAdded, TaskEdited, ClaimWon],
@@ -893,7 +893,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     row!(
         ["task", "require"],
         "task require HANDLE [--journal-schema SCHEMA] [--trust-grant DIGEST] \
-         [--appliance-after [VERSION]] [--clear]",
+         [--appliance-after [VERSION]] [--resource RESOURCE...] [--clear]",
         OperatorOrLane,
         Command,
         [TaskEdited],

@@ -421,6 +421,7 @@ pub(in crate::resident) fn seed_task_claim(
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
+        resources: wire::ResourceRequirements::default(),
         project: "task.claim".to_owned(),
         filing: wire::TaskFiling::Filed,
         priority: None,

@@ -392,6 +392,7 @@ fn append_design_heads(
         description: Some(wire::OOPS_DESIGN_DESCRIPTION.to_owned()),
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
+        resources: wire::ResourceRequirements::default(),
         project: wire::OOPS_DESIGN_PROJECT.to_owned(),
         filing: wire::TaskFiling::Filed,
         priority: None,

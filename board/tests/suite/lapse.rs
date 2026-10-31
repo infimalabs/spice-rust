@@ -402,6 +402,7 @@ fn seeded_at(path: Option<&Path>, residency: bool, current: &str) -> Journal {
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
+        resources: wire::ResourceRequirements::default(),
         project: "board.possession".to_owned(),
         filing: wire::TaskFiling::Filed,
         priority: Some(wire::TaskPriority::High),

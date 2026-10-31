@@ -29,6 +29,12 @@ pub(super) fn client_add(
             return refusal("task::dependency-invalid", None, &error.to_string());
         }
     };
+    let resources = matches
+        .get_many::<String>("resource")
+        .into_iter()
+        .flatten()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
     let requirements = match environment_requirements(
         matches
             .get_one::<String>("requires-journal-schema")
@@ -37,6 +43,7 @@ pub(super) fn client_add(
             .get_one::<String>("requires-trust-grant")
             .map(String::as_str),
         None,
+        &resources,
     ) {
         Ok(requirements) => requirements,
         Err(outcome) => return outcome,

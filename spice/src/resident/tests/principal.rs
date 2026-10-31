@@ -505,7 +505,8 @@ fn the_door_admits_each_command_under_the_roles_its_predecessor_left() {
         command_surface::Runtimes::new(lane, lane_recovery::Runtime::new(reporter)),
         &startup.config,
         &reads,
-    );
+    )
+    .expect("fixture command surface restores");
     let bootstrap = heads(&seated.bus)[0].principal;
     let mut seats = Seats::new();
     let mut door = |kind, body: serde_json::Value, id| {

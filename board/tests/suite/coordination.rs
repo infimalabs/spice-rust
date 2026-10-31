@@ -91,6 +91,7 @@ fn statement(name: &str) -> TaskHead {
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
+        resources: wire::ResourceRequirements::default(),
         project: "board.kernel".to_owned(),
         filing: wire::TaskFiling::Filed,
         priority: None,

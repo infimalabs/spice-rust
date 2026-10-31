@@ -241,6 +241,7 @@ fn board_task(
                 description: None,
                 acceptance: Vec::new(),
                 requirements,
+                resources: Default::default(),
                 project: project.to_owned(),
                 filing,
                 priority: None,
@@ -344,6 +345,7 @@ fn board_response_with_requirements(
         history: None,
         addresses: Default::default(),
         trust,
+        resource_pools: Default::default(),
         appliance: wire::manifest::ProductVersion::parse("0.2.0").expect("fixture appliance"),
         residency: wire::intent::Positioned {
             position: seq(3),

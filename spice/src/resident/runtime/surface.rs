@@ -296,7 +296,7 @@ pub(super) async fn run_surface(
         runtimes(&capabilities, &discovery, &channels.reporter, &reads),
         config,
         &reads,
-    );
+    )?;
     let mut wakes = Wakes {
         timers: backgrounds.timers,
         lifecycle: backgrounds.lifecycle,

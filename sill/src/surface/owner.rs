@@ -41,6 +41,8 @@ pub(super) struct LockOwnerEvidence {
     pub(super) protected_guardian: Option<u32>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(super) owner_released: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) context: Option<String>,
 }
 
 impl LockOwnerEvidence {
@@ -48,6 +50,7 @@ impl LockOwnerEvidence {
         (!self.owner_released).then(|| LockOwnerReport {
             pid: self.pid,
             cwd: self.cwd.clone(),
+            context: self.context.clone(),
         })
     }
 
@@ -124,6 +127,7 @@ pub(super) fn guardian_state(owner: Option<&LockOwnerEvidence>) -> GuardianState
 pub(super) fn owner_record(
     protected: Option<(ProtectedGroup, u32)>,
     owner_released: bool,
+    context: Option<&str>,
 ) -> io::Result<LockOwnerEvidence> {
     Ok(LockOwnerEvidence {
         pid: process::id(),
@@ -131,6 +135,7 @@ pub(super) fn owner_record(
         owner_released,
         protected_group: protected.map(|(group, _)| group),
         protected_guardian: protected.map(|(_, guardian)| guardian),
+        context: context.map(ToOwned::to_owned),
     })
 }
 
@@ -138,8 +143,9 @@ pub(super) fn write_owner(
     file: &fs::File,
     protected: Option<(ProtectedGroup, u32)>,
     owner_released: bool,
+    context: Option<&str>,
 ) -> io::Result<()> {
-    write_owner_with(file, protected, owner_released, || Ok(()))
+    write_owner_with(file, protected, owner_released, context, || Ok(()))
 }
 
 /// Rewrite the record, offering the last instant its predecessor is still there.
@@ -159,10 +165,11 @@ pub(super) fn write_owner_with(
     file: &fs::File,
     protected: Option<(ProtectedGroup, u32)>,
     owner_released: bool,
+    context: Option<&str>,
     before_landing: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<()> {
-    let record =
-        serde_json::to_vec(&owner_record(protected, owner_released)?).map_err(io::Error::other)?;
+    let record = serde_json::to_vec(&owner_record(protected, owner_released, context)?)
+        .map_err(io::Error::other)?;
     let spanned = file.metadata()?.len().min(OWNER_BYTES_LIMIT);
     let bytes = replacement_record(record, spanned);
     let mut writer = file;

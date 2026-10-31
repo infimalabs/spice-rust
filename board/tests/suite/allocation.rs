@@ -136,6 +136,7 @@ fn fixture() -> Journal {
             description: None,
             acceptance: Vec::new(),
             requirements: wire::EnvironmentRequirements::default(),
+            resources: wire::ResourceRequirements::default(),
             project: "board.allocate".to_owned(),
             filing: wire::TaskFiling::Filed,
             priority: Some(priority),

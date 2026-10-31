@@ -80,6 +80,7 @@ fn prepare_correction(
         command,
         edit,
         &statement.requirements,
+        &statement.resources,
         &snapshot.answer.environment(),
         at,
     )?;
@@ -210,7 +211,9 @@ fn corrected_statement(
         statement.acceptance = edit.acceptance.clone();
     }
     if let Some(requirements) = &edit.requirements {
-        statement.requirements = requirements.requirements();
+        let authored = requirements.requirements();
+        statement.resources = authored.compiled_resources();
+        statement.requirements = authored.without_resources();
     }
     if let Some(intent) = edit.intent {
         if statement.preparation.is_some() {

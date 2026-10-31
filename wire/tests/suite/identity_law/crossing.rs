@@ -360,6 +360,7 @@ fn cover_task_heads() {
                 description: None,
                 acceptance: Vec::new(),
                 requirements: EnvironmentRequirements::default(),
+                resources: wire::ResourceRequirements::default(),
                 project: "gate".to_owned(),
                 filing: wire::TaskFiling::Filed,
                 priority: None,
@@ -384,6 +385,11 @@ fn cover_task_heads() {
                 requirements: EnvironmentRequirements::one(
                     EnvironmentRequirement::journal_schema(15).expect("positive schema"),
                 ),
+                resources: wire::ResourceRequirements::new([(
+                    "windows-guest".parse().expect("resource name"),
+                    2,
+                )])
+                .expect("resource requirements"),
                 project: "gate".to_owned(),
                 filing: wire::TaskFiling::Draft,
                 priority: None,

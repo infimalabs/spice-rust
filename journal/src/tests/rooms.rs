@@ -216,6 +216,7 @@ fn task_with_acceptance(
         description: None,
         acceptance,
         requirements: wire::EnvironmentRequirements::default(),
+        resources: wire::ResourceRequirements::default(),
         project: "rooms".to_owned(),
         filing: wire::TaskFiling::Filed,
         priority: None,

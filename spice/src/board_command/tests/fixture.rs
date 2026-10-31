@@ -477,7 +477,12 @@ pub(super) fn add_project_with_acceptance(
     )
 }
 
-fn authored_add(title: &str, project: &str, flow: Option<&str>, acceptance: &[&str]) -> TaskAdd {
+pub(super) fn authored_add(
+    title: &str,
+    project: &str,
+    flow: Option<&str>,
+    acceptance: &[&str],
+) -> TaskAdd {
     TaskAdd {
         preparation: None,
         intent: None,
@@ -497,7 +502,7 @@ fn authored_add(title: &str, project: &str, flow: Option<&str>, acceptance: &[&s
     }
 }
 
-fn issue_add(
+pub(super) fn issue_add(
     bus: &Bus,
     epoch: CanonicalUuid,
     actor: Actor,

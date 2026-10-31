@@ -139,6 +139,7 @@ fn validated_snapshot_from_with_occupant(
             steps: Default::default(),
             history: None,
             trust: positioned_trust(observed),
+            resource_pools: Default::default(),
             appliance,
             addresses: observed.facts().seat_addresses(&residency.body.lanes),
             residency,
@@ -680,12 +681,28 @@ pub(super) fn task_git_outcome(error: spice::task_git::Error) -> Outcome<Command
     }
 }
 
+fn observe_resource_pools(
+    snapshot: &mut ValidatedSnapshot,
+    resources: Option<&resources::ResourceClaims>,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let Some(resources) = resources else {
+        return Ok(());
+    };
+    let environment = resources.observe(snapshot.answer.environment(), &snapshot.entries)?;
+    snapshot.answer.resource_pools = environment
+        .resource_pools()
+        .map(|(name, available)| (name.clone(), available))
+        .collect();
+    Ok(())
+}
+
 pub(super) fn read_board(
     bus: &Bus,
     read: &BoardRead,
     command: &wire::AdmittedCommand,
     allocation: &board::NextConfig,
     profiles: next_work::OccupantProfiles<'_>,
+    resources: Option<&resources::ResourceClaims>,
 ) -> Outcome<CommandAnswer> {
     let principal = command.actor().clone();
     let observed = match bus.task_snapshot() {
@@ -693,7 +710,9 @@ pub(super) fn read_board(
         Err(error) => return store_fault("board::heads-unreadable", &error.to_string()),
     };
     if matches!(read, BoardRead::Next) {
-        let next = next_work::read_next_work(bus, &observed, principal, allocation, profiles);
+        let next = next_work::read_next_work_with_resources(
+            bus, &observed, principal, allocation, profiles, resources,
+        );
         return match next {
             Ok(answer) => snapshot_reply(answer.cursor, CommandAnswer::Board(Box::new(answer))),
             Err(outcome) => outcome,
@@ -717,6 +736,9 @@ pub(super) fn read_board(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
+    if let Err(outcome) = observe_resource_pools(&mut snapshot, resources) {
+        return outcome;
+    }
     if matches!(read, BoardRead::Open | BoardRead::All { .. }) {
         let resolved = board::resolved_tasks(&snapshot.entries);
         let environment = snapshot.answer.environment();

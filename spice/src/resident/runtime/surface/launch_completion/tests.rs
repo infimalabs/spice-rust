@@ -36,7 +36,8 @@ fn a_pending_launch_survives_refused_wakes_and_commits_before_dark() {
         runtimes(&capabilities, &discovery, &fixture.reporter(), &reads),
         &startup.config,
         &reads,
-    );
+    )
+    .expect("fixture command surface restores");
     let door_path = crate::resident::supervisor::command::kick_path(&fixture.paths, fixture.lane);
     let door = door::Door::bind(&door_path, 1024).expect("the lane's door binds");
     let kicked = || {

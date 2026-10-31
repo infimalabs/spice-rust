@@ -103,13 +103,15 @@ fn report_observes_held_and_released_shards_without_creating_missing_ones() {
     let scratch = Scratch::new("availability");
     let root = scratch.path().join("locks");
     let topology = topology(&root);
-    let held = match topology
+    let mut held = match topology
         .try_acquire("pool", Some(0))
         .expect("selected shard is observable")
     {
         LockAttempt::Acquired(held) => held,
         LockAttempt::Contended { .. } => panic!("fresh shard was contended"),
     };
+    held.set_context(Some("claim-context".to_owned()))
+        .expect("owner context publishes");
 
     let report = topology.report().expect("held topology is observable");
     let pool = report
@@ -127,6 +129,13 @@ fn report_observes_held_and_released_shards_without_creating_missing_ones() {
     assert_eq!(
         pool.entries[0].owner.as_ref().map(|owner| owner.pid),
         Some(std::process::id())
+    );
+    assert_eq!(
+        pool.entries[0]
+            .owner
+            .as_ref()
+            .and_then(|owner| owner.context.as_deref()),
+        Some("claim-context")
     );
     assert!(!pool.entries[0].owner_stale);
 
@@ -250,7 +259,7 @@ fn a_reserved_slot_is_filled_in_place_and_never_moves_under_the_guardian() {
 
     let guardian = std::process::id();
     let reserved = serde_json::to_vec(
-        &owner_record(Some((ProtectedGroup::Blank, guardian)), false).expect("owner reads"),
+        &owner_record(Some((ProtectedGroup::Blank, guardian)), false, None).expect("owner reads"),
     )
     .expect("a reserved record serializes");
     let start = reserved
@@ -270,8 +279,16 @@ fn a_reserved_slot_is_filled_in_place_and_never_moves_under_the_guardian() {
     // read a moment ago. `owner_released` is the field that would break it
     // by appearing between the two, so it is the one asked here.
     for record in [
-        owner_record(Some((ProtectedGroup::Published(4242), guardian)), false),
-        owner_record(Some((ProtectedGroup::Published(4242), guardian)), true),
+        owner_record(
+            Some((ProtectedGroup::Published(4242), guardian)),
+            false,
+            None,
+        ),
+        owner_record(
+            Some((ProtectedGroup::Published(4242), guardian)),
+            true,
+            None,
+        ),
     ] {
         let record = serde_json::to_vec(&record.expect("owner reads")).expect("serializes");
         assert_eq!(

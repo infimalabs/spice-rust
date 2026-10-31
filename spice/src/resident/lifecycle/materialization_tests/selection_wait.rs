@@ -115,6 +115,7 @@ fn released_output_write() -> JournalWrite {
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
+        resources: wire::ResourceRequirements::default(),
         project: PROJECT.to_owned(),
         filing: wire::TaskFiling::Filed,
         priority: None,

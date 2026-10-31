@@ -234,6 +234,11 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
                 .iter()
                 .filter(|requirement| requirement_blocked(board, requirement))
         });
+        let resources = wait.environment().then(|| {
+            statement.resources.iter().filter(|(name, shards)| {
+                board.is_none_or(|board| board.resource_available(name) < *shards)
+            })
+        });
         let holds = wait
             .holds()
             .iter()
@@ -260,6 +265,10 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
                 <div class="work-blocker-list">
                     {for requirements.into_iter().flatten()
                         .map(|requirement| render_requirement(statement, requirement, runtime, can_grant, grant))}
+                    {for resources.into_iter().flatten().map(|(name, shards)| {
+                        let available = board.map_or(0, |board| board.resource_available(name));
+                        render_resource_requirement(name, shards, available)
+                    })}
                     if let Some(wall) = wait.wall() {
                         {render_wall(wall)}
                     }
@@ -334,6 +343,18 @@ fn render_wall(wall: DependencyWall<'_>) -> Html {
     }
 }
 
+fn render_resource_requirement(name: &wire::ResourcePoolName, shards: u32, available: u32) -> Html {
+    html! {
+        <section class="work-blocker-card" data-blocker-kind="resource-pool">
+            <div>
+                <strong>{"Shared resource unavailable"}</strong>
+                <p>{format!("Requires {shards} shard(s) from {name}; {available} currently available.")}</p>
+            </div>
+            <span class="work-blocker-state">{"Resource required"}</span>
+        </section>
+    }
+}
+
 fn render_requirement(
     statement: &wire::intent::BoardStatement,
     requirement: &wire::EnvironmentRequirement,
@@ -363,6 +384,12 @@ fn render_requirement(
                 <span class="work-blocker-state">{"Upgrade required"}</span>
             </section>
         },
+        wire::EnvironmentRequirement::ResourcePool { name, shards } => {
+            let available = runtime
+                .and_then(AppRuntime::board)
+                .map_or(0, |board| board.resource_available(name));
+            render_resource_requirement(name, shards.get(), available)
+        }
     }
 }
 
