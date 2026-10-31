@@ -85,8 +85,11 @@
 /// floors, vendor arming, commit landings, gate findings and clearances, the
 /// five graceful-shutdown transitions, and lane catch-up horizons cross as
 /// inert evidence naming schema-103, and the retained-only horizon projection
-/// drops.
-pub const SCHEMA_VERSION: u32 = 104;
+/// drops. Schema 105 retires the provenance-less judge rulings, which keep
+/// their place in the standing judgment tally, and lease warnings together
+/// with every steering fact, head, and miss of the directive each opened, as
+/// inert evidence naming schema-104.
+pub const SCHEMA_VERSION: u32 = 105;
 
 /// First position assigned by a newly created journal.
 ///

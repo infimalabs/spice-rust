@@ -70,7 +70,7 @@ fn measured_taste_page(journal: &Journal) -> crate::guard::IndexedReadMetrics {
             read.taste_evidence_page("target", horizon, horizon, 3)
         })
         .expect("bounded taste page reads");
-    assert_eq!((page.population, page.confirmed, page.cleared), (3, 3, 0));
+    assert_eq!((page.population, page.confirmed, page.cleared), (3, 0, 3));
     assert_eq!(page.rows.len(), 3);
     indexed_read_metrics()
 }
@@ -84,14 +84,31 @@ fn append_taste_judgment(journal: &mut Journal, taste: &str, offset: u64) {
         instant(),
         wire::Producer::Judge,
     );
+    let judged: wire::body::TasteJudged = serde_json::from_value(json!({
+        "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+        "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+        "compaction": 1,
+        "taste": taste,
+        "content": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bag": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "trigger": taste,
+        "vendor": "omp",
+        "source": format!("fixture prose {offset}"),
+        "locus": {
+            "source": "018f82d4-6f59-7d06-92e3-bce9131163c5",
+            "member": 0,
+            "offset": offset,
+            "length": 1,
+            "event": 0,
+            "line": 1,
+            "column": 1
+        },
+        "attempts": [],
+        "decision": {"verdict": "cleared"}
+    }))
+    .expect("cleared judgment fixture decodes");
     write
-        .fact(
-            wire::body::TasteConfirmed {
-                taste: taste.to_owned(),
-                locus: format!("fixture:{offset}"),
-            },
-            FactCause::Root,
-        )
+        .fact(judged, FactCause::Root)
         .expect("taste judgment builds");
     journal.apply(write).expect("taste judgment commits");
 }

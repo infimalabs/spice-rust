@@ -781,28 +781,3 @@ pub struct ClaimRenewed {
     /// Maximum the extension stayed within.
     pub maximum: Instant,
 }
-
-/// A live lease crossed its warning horizon and opened ordinary lane steering.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClaimLeaseWarned {
-    /// Warned task.
-    pub task: TaskStamp,
-    /// Exact claim head this warning generation observed.
-    pub claim: Seq,
-    /// Exact lease head this warning generation observed.
-    pub lease: Seq,
-    /// Lane holding the claim when the warning fired.
-    pub lane: CanonicalUuid,
-    /// Occupant holding the lane when the warning fired.
-    pub occupant: CanonicalUuid,
-    /// Resident epoch authorizing the warning.
-    pub epoch: CanonicalUuid,
-    /// Lease expiry whose warning generation this fact records.
-    pub expiry: Instant,
-    /// Durable directive identity opened for the lane.
-    pub directive: CanonicalUuid,
-    /// Human-sized steering key.
-    pub key: String,
-    /// Actionable warning text presented through ordinary steering.
-    pub text: String,
-}

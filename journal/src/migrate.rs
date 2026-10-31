@@ -108,8 +108,10 @@ const PREPARED: &str = "prepared";
 /// boundary and review correction enters the release-note projection. Before
 /// any of that, every retained fact of a kind no release still produces
 /// (consent floors, vendor arming, commit landings, gate findings and
-/// clearances, graceful-shutdown transitions, and lane catch-up horizons)
-/// retires into inert historical authority and the horizon projection drops,
+/// clearances, graceful-shutdown transitions, lane catch-up horizons,
+/// provenance-less judge rulings, and lease warnings with every steering fact
+/// of the directives they opened) retires into inert historical authority, the
+/// horizon projection drops, and so do those directives' heads and misses;
 /// the question-result protocol and required question-result
 /// evidence retire into inert historical authority, every retained
 /// contribution label with its receipt crosses to its charge, every

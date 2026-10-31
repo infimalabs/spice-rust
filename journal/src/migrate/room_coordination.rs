@@ -44,6 +44,7 @@ fn retire_facts(transaction: &rusqlite::Transaction<'_>) -> Result<BTreeSet<i64>
             "SELECT {COLUMNS} FROM fact_envelopes \
              WHERE kind IN ('room::directed', 'room::shelved') ORDER BY seq"
         ),
+        [],
     )?;
     let mut retired = BTreeSet::new();
     let mut positions = BTreeSet::new();
@@ -62,6 +63,7 @@ fn retire_facts(transaction: &rusqlite::Transaction<'_>) -> Result<BTreeSet<i64>
         &format!(
             "SELECT {COLUMNS} FROM fact_envelopes WHERE kind = 'room::delivered' ORDER BY seq"
         ),
+        [],
     )?;
     for row in deliveries {
         let through = serde_json::from_slice::<wire::Envelope<serde_json::Value>>(&row.envelope)

@@ -44,14 +44,16 @@ pub(super) struct RetiredRow {
     kind: String,
 }
 
-/// Every row `select` names; it must select [`COLUMNS`] in order.
+/// Every row `select` names under `params`; it must select [`COLUMNS`] in
+/// order.
 pub(super) fn read_rows(
     transaction: &rusqlite::Transaction<'_>,
     select: &str,
+    params: impl rusqlite::Params,
 ) -> Result<Vec<RetiredRow>, OpenError> {
     let mut statement = transaction.prepare(select).map_err(OpenError::Sqlite)?;
     let rows = statement
-        .query_map([], |row| {
+        .query_map(params, |row| {
             Ok(RetiredRow {
                 seq: row.get(0)?,
                 wire_version: row.get(1)?,

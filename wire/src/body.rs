@@ -579,9 +579,8 @@ pub use lane::{
     LaneExited, LaneFastRetuned, LaneHeld, LaneImported, LaneKilled, LaneLaunchIdentity,
     LaneRemoved, LaneRenewalChanged, LaneRenewed, LaneResumed, LaneRetuned, LaneRuntimeRetuned,
     LaneSeated, LaneSessionDeclared, LaneSignalled, LaneSourceBoundary, LaneStarted, LaneTimedOut,
-    RtkHealth, RtkHealthState, TasteCleared, TasteConfirmed, TasteDecision, TasteJudgeAttempt,
-    TasteJudgeReply, TasteJudged, TasteReminded, TeamArranged, TeamConfigured, TeamStanding,
-    VendorFailureInput,
+    RtkHealth, RtkHealthState, TasteDecision, TasteJudgeAttempt, TasteJudgeReply, TasteJudged,
+    TasteReminded, TeamArranged, TeamConfigured, TeamStanding, VendorFailureInput,
 };
 
 /// A seated occupant exceeded a call-count or active-silence narration bound.
@@ -695,7 +694,9 @@ pub struct TrustRevoked {
 /// The outer envelope keeps its durable position, attribution, and causal
 /// links. `fact` preserves the retired discriminant and body as opaque JSON:
 /// current readers validate this marker but never decode that nested payload as
-/// an executable fact.
+/// an executable fact. The one retained payload a current projection still
+/// reads is a judge ruling from before provenance-complete judgments; see
+/// [`JournalRetained::taste_ruling`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JournalRetained {
@@ -703,6 +704,41 @@ pub struct JournalRetained {
     pub release: String,
     /// Retired fact discriminant and body, preserved as inert evidence.
     pub fact: serde_json::Value,
+}
+
+impl JournalRetained {
+    /// The judge ruling this evidence retains, when it retains one.
+    ///
+    /// Before a ruling carried its full provenance, the judge recorded only
+    /// the taste, the evidence locus, and the verdict as `taste::confirmed` or
+    /// `taste::cleared`. Those rulings still count toward a taste's standing
+    /// judgment tally and read back in its history, without the provenance a
+    /// current [`TasteJudged`] carries.
+    #[must_use]
+    pub fn taste_ruling(&self) -> Option<RetainedTasteRuling> {
+        let confirmed = match self.fact.get("kind")?.as_str()? {
+            "taste::confirmed" => true,
+            "taste::cleared" => false,
+            _ => return None,
+        };
+        let field = |name: &str| Some(self.fact.get(name)?.as_str()?.to_owned());
+        Some(RetainedTasteRuling {
+            taste: field("taste")?,
+            locus: field("locus")?,
+            confirmed,
+        })
+    }
+}
+
+/// A judge ruling retained from before provenance-complete judgments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetainedTasteRuling {
+    /// Taste the judge ruled on.
+    pub taste: String,
+    /// Evidence locus the judge ruled at.
+    pub locus: String,
+    /// Whether the judge confirmed the taste rather than clearing it.
+    pub confirmed: bool,
 }
 
 /// The one forward schema migration finalized before epoch mint.

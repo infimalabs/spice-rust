@@ -77,12 +77,6 @@ const STEER_ACKED: &str = r#"{
   }
 }"#;
 
-const TASTE_CONFIRMED: &str = r#"{
-  "kind": "taste::confirmed",
-  "taste": "polling",
-  "locus": "turn:48213#3"
-}"#;
-
 const RELEASE_PUBLISHED: &str = r#"{
   "kind": "release::published",
   "manifest": "4a1b9c2d3e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef",
@@ -186,15 +180,6 @@ fn the_ack_scanner_body_matches_the_specified_fields() {
 }
 
 #[test]
-fn the_judge_body_matches_the_specified_fields() {
-    let fact: Fact<body::TasteConfirmed> = round_trip(TASTE_CONFIRMED);
-
-    assert_eq!(fact.kind(), FactKind::TasteConfirmed);
-    assert_eq!(fact.producer(), Producer::Judge);
-    assert_eq!(fact.body.taste, "polling");
-}
-
-#[test]
 fn a_nested_body_keeps_its_specified_entry_fields() {
     let fact: Fact<body::ReleasePublished> = round_trip(RELEASE_PUBLISHED);
 
@@ -248,35 +233,35 @@ fn a_removed_lane_records_the_topology_member_it_deleted() {
 
 #[test]
 fn a_body_refuses_a_kind_it_is_not_registered_against() {
-    let foreign = TASTE_CONFIRMED.replace("taste::confirmed", "taste::cleared");
+    let foreign = TRUST_GRANTED.replace("trust::granted", "trust::revoked");
 
-    let error = wire::decode::<Fact<body::TasteConfirmed>>(foreign.as_bytes())
+    let error = wire::decode::<Fact<body::TrustGranted>>(foreign.as_bytes())
         .expect_err("a body does not answer for a kind it is not registered against");
 
     let detail = error.to_string();
     assert!(
-        detail.contains("taste::cleared") && detail.contains("taste::confirmed"),
+        detail.contains("trust::revoked") && detail.contains("trust::granted"),
         "the refusal names the kind it read and the kind it expected: {detail}"
     );
 }
 
 #[test]
 fn an_unspelled_kind_is_not_a_fact() {
-    let invented = TASTE_CONFIRMED.replace("taste::confirmed", "taste::suspected");
+    let invented = TRUST_GRANTED.replace("trust::granted", "trust::suspected");
 
     assert!(
-        wire::decode::<Fact<body::TasteConfirmed>>(invented.as_bytes()).is_err(),
+        wire::decode::<Fact<body::TrustGranted>>(invented.as_bytes()).is_err(),
         "a spelling absent from the vocabulary is not a fact"
     );
 }
 
 #[test]
 fn an_opaque_read_still_validates_the_registered_body() {
-    let missing = r#"{"kind":"taste::confirmed","taste":"polling"}"#;
+    let missing = r#"{"kind":"trust::granted","surface":"spice"}"#;
     let extra = r#"{
-      "kind": "taste::confirmed",
-      "taste": "polling",
-      "locus": "turn:48213#3",
+      "kind": "trust::granted",
+      "surface": "spice",
+      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "guess": true
     }"#;
 
@@ -289,26 +274,25 @@ fn an_opaque_read_still_validates_the_registered_body() {
         "an opaque reader must reject fields outside the registered body"
     );
     assert!(
-        wire::decode::<Fact<body::TasteConfirmed>>(extra.as_bytes()).is_err(),
+        wire::decode::<Fact<body::TrustGranted>>(extra.as_bytes()).is_err(),
         "a typed reader must reject the same fields outside its registered body"
     );
 }
 
 #[test]
 fn an_opaque_read_answers_only_the_kind_its_body_is_registered_against() {
-    let fact: AnyFact = wire::decode(TASTE_CONFIRMED.as_bytes()).expect("opaque fact decodes");
+    let fact: AnyFact = wire::decode(TRUST_GRANTED.as_bytes()).expect("opaque fact decodes");
 
-    let confirmed = fact
-        .read::<body::TasteConfirmed>()
+    let granted = fact
+        .read::<body::TrustGranted>()
         .expect("the registered kind reads back");
-    assert_eq!(confirmed.taste, "polling");
-    assert_eq!(confirmed.locus, "turn:48213#3");
-    // taste::cleared carries the same two fields as taste::confirmed, so the
+    assert_eq!(granted.surface, "spice");
+    // trust::revoked carries the same two fields as trust::granted, so the
     // body alone cannot tell them apart and the kind is the only thing that
-    // answers here. Reading one as the other must be absent rather than a
-    // curation verdict flipped from confirmed to cleared.
+    // answers here. Reading one as the other must be absent rather than an
+    // approval flipped into a withdrawal.
     assert!(
-        fact.read::<body::TasteCleared>().is_none(),
+        fact.read::<body::TrustRevoked>().is_none(),
         "a kind the body is not registered against has no answer"
     );
 }
@@ -427,7 +411,6 @@ fn producer_assignment_follows_the_specified_enumeration() {
     let bus_timers = [
         FactKind::ClaimLapsed,
         FactKind::ClaimRenewed,
-        FactKind::ClaimLeaseWarned,
         FactKind::SteerLapsed,
         FactKind::LaneHeld,
         FactKind::LaneResumed,

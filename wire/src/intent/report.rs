@@ -28,7 +28,6 @@ pub const REPORT_FACT_KINDS: &[FactKind] = &[
     FactKind::ClaimLapsed,
     FactKind::ClaimAcknowledged,
     FactKind::ClaimRenewed,
-    FactKind::ClaimLeaseWarned,
     FactKind::LaneSeated,
     FactKind::LaneArranged,
     FactKind::LaneRetuned,

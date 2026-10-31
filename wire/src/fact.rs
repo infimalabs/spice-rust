@@ -325,8 +325,6 @@ vocabulary! {
     ClaimLapsed = "claim::lapsed" by BusTimer;
     /// The resident extended a live, epoch-bound lease within its maximum.
     ClaimRenewed = "claim::renewed" by BusTimer;
-    /// A live lease crossed its warning horizon and opened ordinary lane steering.
-    ClaimLeaseWarned = "claim::warned" by BusTimer;
 
     /// An anchor task's room received one authored or linked publication.
     RoomPublished = "room::published" by CommandDoor;
@@ -477,10 +475,6 @@ vocabulary! {
     /// Operator authority, changed input, or expiry returned a held lane to eligibility.
     LaneResumed = "lane::resumed" by BusTimer;
 
-    /// The judge confirmed a taste at an evidence locus.
-    TasteConfirmed = "taste::confirmed" by Judge;
-    /// The judge cleared a taste at an evidence locus.
-    TasteCleared = "taste::cleared" by Judge;
     /// The resident judge durably adjudicated one live taste candidate.
     TasteJudged = "taste::judged" by Judge;
     /// A taste fired on authored prose and raised one live directive.
@@ -549,7 +543,6 @@ impl FactKind {
     /// classification here prevents a selective journal query from drifting
     /// away from the reducer that interprets its results.
     pub const STEERING_AUTHORITY: &[Self] = &[
-        Self::ClaimLeaseWarned,
         Self::SteerSent,
         Self::SteerEscalated,
         Self::SteerRecovered,
@@ -792,14 +785,14 @@ impl AnyFact {
     ///
     /// ```
     /// let fact: wire::AnyFact = wire::decode(
-    ///     br#"{"kind":"taste::confirmed","taste":"polling","locus":"turn:48213#3"}"#,
+    ///     br#"{"kind":"trust::granted","surface":"spice","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#,
     /// )
     /// .expect("a registered body decodes");
     ///
     /// // The annotation is the point: an answer, or the wrong kind asked for.
-    /// let confirmed: Option<wire::body::TasteConfirmed> = fact.read();
-    /// assert_eq!(confirmed.expect("the registered kind").taste, "polling");
-    /// assert!(fact.read::<wire::body::TasteCleared>().is_none());
+    /// let granted: Option<wire::body::TrustGranted> = fact.read();
+    /// assert_eq!(granted.expect("the registered kind").surface, "spice");
+    /// assert!(fact.read::<wire::body::TrustRevoked>().is_none());
     /// ```
     #[must_use]
     pub fn read<F: Body>(&self) -> Option<F> {
@@ -951,7 +944,6 @@ impl AnyFact {
             Decoded::ClaimFreed(body) => Some(&body.task),
             Decoded::ClaimLapsed(body) => Some(&body.task),
             Decoded::ClaimRenewed(body) => Some(&body.task),
-            Decoded::ClaimLeaseWarned(body) => Some(&body.task),
             _ => self.mutated_tasks().next(),
         }
     }

@@ -1189,14 +1189,17 @@ fn unrelated_write(label: &str, count: usize) -> JournalWrite {
             .parse()
             .expect("fixture recovery origin"),
         instant(30),
-        Producer::Judge,
+        Producer::ResidentRecognition,
     );
     for index in 0..count {
         write
             .fact(
-                body::TasteCleared {
-                    taste: format!("{label}-{index}"),
-                    locus: "lifecycle-materialization-fixture".to_owned(),
+                body::NarrationCleared {
+                    lane: lane(),
+                    occupant: lane(),
+                    moments: u32::try_from(index).expect("fixture count fits"),
+                    prods: 1,
+                    relief: body::NarrationRelief::Prose,
                 },
                 FactCause::Root,
             )

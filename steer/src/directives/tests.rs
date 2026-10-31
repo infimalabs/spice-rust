@@ -356,19 +356,6 @@ fn reminded_bytes(seq: u64, key: &str) -> String {
     )
 }
 
-/// One older taste judgment, as a journal predating reminders stores it.
-#[cfg(not(target_arch = "wasm32"))]
-fn taste_bytes(seq: u64, kind: &str) -> String {
-    format!(
-        concat!(
-            r#"{{"v":1,"seq":{},"at":"2026-08-06T03:00:0{}.000Z","actor":"spice","#,
-            r#""origin":"resident:e2e9f1f2-19b2-4ddc-83fa-340b02dee2c4","#,
-            r#""fact":{{"kind":"{}","taste":"polling","locus":"turn:48213#3"}}}}"#
-        ),
-        seq, seq, kind
-    )
-}
-
 /// Escalation changes presentation without multiplying identity or pending rows.
 #[test]
 fn an_escalation_retains_one_stable_pending_directive() {
@@ -990,33 +977,6 @@ fn a_stored_reminder_replays_into_one_live_directive() {
     assert_eq!(pending[0].key(), &key(ROOT));
     assert_eq!(pending[0].text(), "polling is not a completion event");
     assert_eq!(pending[0].control(), None);
-}
-
-/// A journal written before reminders existed still replays to an empty
-/// inbox.
-///
-/// `taste::confirmed` and `taste::cleared` sit on the taste plane the
-/// reminder now shares, so a steering reduction reads past them rather than
-/// through them. Failing here would mean every lane whose journal predates
-/// the reminder could no longer rebuild its own inbox; raising a directive
-/// here would mean an old judgment silently became a live obligation.
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn a_snapshot_of_only_older_taste_facts_replays_without_raising_a_directive() {
-    let snapshot = snapshot_of(&[
-        taste_bytes(1, "taste::confirmed"),
-        taste_bytes(2, "taste::cleared"),
-    ]);
-
-    let ledger = Ledger::from_snapshot(&snapshot).expect("older taste facts still replay");
-
-    assert_eq!(
-        ledger,
-        Ledger::new(),
-        "an older taste fact created steering standing"
-    );
-    assert!(ledger.pending(lane()).is_empty());
-    assert!(ledger.directives().is_empty());
 }
 
 /// Replay is the same reduction, so standing does not depend on when the
