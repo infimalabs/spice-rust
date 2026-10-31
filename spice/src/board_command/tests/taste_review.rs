@@ -229,15 +229,6 @@ fn a_matched_filing_records_a_hold_and_keeps_the_authored_flow() {
     assert!(shown.contains(&format!("next: spice task modify {review_task}")));
     assert!(!shown.contains("next: spice task done"));
 
-    let noted = bus
-        .fact_snapshot()
-        .expect("taste-review facts read")
-        .facts()
-        .iter()
-        .filter(|fact| fact.fact.read::<body::TaskNoted>().is_some())
-        .count();
-    assert_eq!(noted, 0, "neither the clear nor the held read wrote a note");
-
     clean(&root, bus);
 }
 

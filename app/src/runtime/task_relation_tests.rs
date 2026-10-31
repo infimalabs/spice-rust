@@ -77,7 +77,7 @@ fn only_changes_reaching_a_cached_graph_refresh_its_relation_families() {
     invalidate_task_relation_states(
         &mut states,
         &mut revision,
-        &[change(FactKind::TaskNoted, shown.clone())],
+        &[change(FactKind::ClaimRenewed, shown.clone())],
     );
     assert_eq!(revision, 0);
     assert!(

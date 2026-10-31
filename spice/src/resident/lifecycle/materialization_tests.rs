@@ -228,22 +228,26 @@ fn standing(bus: &Bus, incremental: &mut Projection, design: &TaskStamp) -> bool
     projected(bus, incremental, design).grouped()
 }
 
-/// The operator's nudge that readies `design`'s first pass and messages lane 2.
+/// The operator's retained nudge that readies `design`'s first pass and
+/// messaged lane 2.
 fn nudge_write(design: &TaskStamp, at: Instant) -> JournalWrite {
     let origin = format!("resident:{}", epoch())
         .parse::<Origin>()
         .expect("fixture resident origin");
-    let mut write = JournalWrite::new(Actor::Operator, origin, at, Producer::CommandDoor);
+    let mut write = JournalWrite::new(Actor::Operator, origin, at, Producer::ResidentRecognition);
     write
         .fact(
-            wire::rooms::DesignNudged {
-                design: design.clone(),
-                message: None,
-                recipient: Some(uuid(2)),
+            wire::body::JournalRetained {
+                release: "schema-107".to_owned(),
+                fact: serde_json::json!({
+                    "kind": wire::rooms::RetainedNudge::KIND,
+                    "design": design,
+                    "recipient": uuid(2),
+                }),
             },
             FactCause::Root,
         )
-        .expect("nudge fact builds");
+        .expect("retained nudge fact builds");
     write
 }
 
@@ -1189,14 +1193,17 @@ fn unrelated_write(label: &str, count: usize) -> JournalWrite {
             .parse()
             .expect("fixture recovery origin"),
         instant(30),
-        Producer::Judge,
+        Producer::ResidentRecognition,
     );
     for index in 0..count {
         write
             .fact(
-                body::TasteCleared {
-                    taste: format!("{label}-{index}"),
-                    locus: "lifecycle-materialization-fixture".to_owned(),
+                body::NarrationCleared {
+                    lane: lane(),
+                    occupant: lane(),
+                    moments: u32::try_from(index).expect("fixture count fits"),
+                    prods: 1,
+                    relief: body::NarrationRelief::Prose,
                 },
                 FactCause::Root,
             )

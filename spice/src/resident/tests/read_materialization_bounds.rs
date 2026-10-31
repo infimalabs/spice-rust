@@ -16,9 +16,8 @@ fn seeded_reads(
     let mut seed =
         write(Actor::Operator, test_uuid(61), Producer::CommandDoor).expect("seed write starts");
     seed.fact(
-        wire::body::TaskNoted {
+        wire::body::TaskWoken {
             task: "1kKRRsDP".parse().expect("fixture task"),
-            note: "seed".to_owned(),
         },
         FactCause::Root,
     )
@@ -34,15 +33,14 @@ fn seeded_reads(
     (root, paths, bus, reads)
 }
 
-fn append_notes(bus: &Bus, count: usize) -> wire::Seq {
+fn append_facts(bus: &Bus, count: usize) -> wire::Seq {
     let mut delta =
         write(Actor::Operator, test_uuid(62), Producer::CommandDoor).expect("delta write starts");
-    for index in 0..count {
+    for _ in 0..count {
         delta
             .fact(
-                wire::body::TaskNoted {
+                wire::body::TaskWoken {
                     task: "1kKRRsDP".parse().expect("fixture task"),
-                    note: format!("bounded catch-up {index}"),
                 },
                 FactCause::Root,
             )
@@ -61,7 +59,7 @@ fn current_generation_crosses_a_large_gap_one_configured_page_at_a_time() {
     let budget = journal::FactReadBudget::new(2, journal::MAX_RETAINED_FACT_PAGE_BYTES)
         .expect("two-row repository budget");
     let (root, _paths, bus, reads) = seeded_reads("bounded-current-catch-up", budget);
-    let authority = append_notes(&bus, 7);
+    let authority = append_facts(&bus, 7);
 
     reads.refresh().expect("catch-up refresh queues");
     let generation = reads.current().expect("bounded pages reach authority");
@@ -78,7 +76,7 @@ fn drop_cancels_a_large_stale_catch_up_within_one_page_bound() {
     let budget = journal::FactReadBudget::new(1, journal::MAX_RETAINED_FACT_PAGE_BYTES)
         .expect("one-row repository budget");
     let (root, _paths, bus, reads) = seeded_reads("bounded-current-drop", budget);
-    append_notes(&bus, 2_048);
+    append_facts(&bus, 2_048);
     reads.refresh().expect("large catch-up refresh queues");
 
     let started = Monotonic::now();

@@ -26,7 +26,7 @@ async fn authenticated_socket_pages_member_history_before_the_initial_window() {
     let app = TestApp::new();
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
-    commit_stream(&bus, "message history horizon", false);
+    commit_stream(&bus, false);
     let capabilities = operator_capabilities();
     let (server, _control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
@@ -297,7 +297,7 @@ async fn held_history_read_leaves_the_runtime_serving_other_sockets() {
     let app = TestApp::new();
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
-    commit_stream(&bus, "held history horizon", false);
+    commit_stream(&bus, false);
     let capabilities = operator_capabilities();
     let (server, _control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
@@ -365,7 +365,7 @@ async fn one_socket_starts_lane_history_reads_concurrently() {
     let app = TestApp::new();
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
-    commit_stream(&bus, "concurrent history horizon", false);
+    commit_stream(&bus, false);
     let capabilities = operator_capabilities();
     let (server, _control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),

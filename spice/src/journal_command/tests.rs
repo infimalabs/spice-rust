@@ -70,13 +70,20 @@ impl Fixture {
                     .parse()
                     .expect("fixture origin"),
                 "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
-                wire::Producer::Judge,
+                wire::Producer::ResidentRecognition,
             );
             write
                 .fact(
-                    wire::body::TasteConfirmed {
-                        taste: "fixture".to_owned(),
-                        locus: format!("fixture:{offset}"),
+                    wire::body::NarrationCleared {
+                        lane: "018f82d4-6f59-7d06-92e3-bce9131163c2"
+                            .parse()
+                            .expect("fixture lane"),
+                        occupant: "018f82d4-6f59-7d06-92e3-bce9131163c4"
+                            .parse()
+                            .expect("fixture occupant"),
+                        moments: 1,
+                        prods: 1,
+                        relief: wire::body::NarrationRelief::Prose,
                     },
                     journal::FactCause::Root,
                 )

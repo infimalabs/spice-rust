@@ -892,13 +892,7 @@ fn drift_residency(journal: &mut Journal, drift: impl FnOnce(&mut ResidencyHead)
         Producer::CommandDoor,
     );
     let fact = write
-        .fact(
-            body::UpDraining {
-                epoch: next.epoch,
-                occupants: 1,
-            },
-            FactCause::Root,
-        )
+        .fact(body::UpDark { epoch: next.epoch }, FactCause::Root)
         .expect("residency transition fact");
     write.residency_head(fact, move |_| next);
     journal.apply(write).expect("the drifted residency commits");

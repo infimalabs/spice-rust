@@ -8,9 +8,9 @@
 use std::collections::BTreeMap;
 
 use wire::body::{
-    ClaimLeaseWarned, SteerAcked, SteerCanceled, SteerDeclined, SteerEscalated, SteerLapsed,
-    SteerMessaged, SteerMissed, SteerQueued, SteerRecovered, SteerReplied, SteerSent,
-    TasteDecision, TasteJudged, TasteReminded,
+    SteerAcked, SteerCanceled, SteerDeclined, SteerEscalated, SteerLapsed, SteerMessaged,
+    SteerMissed, SteerQueued, SteerRecovered, SteerReplied, SteerSent, TasteDecision, TasteJudged,
+    TasteReminded,
 };
 use wire::steering::SteerDeadLettered;
 use wire::{CanonicalUuid, Instant};
@@ -176,12 +176,6 @@ impl Ledger {
         } else if let Some(body) = fact.read::<TasteReminded>() {
             let opened = Some(body.directive);
             (self.absorb_recorded(Steering::Reminded(&body), at), opened)
-        } else if let Some(body) = fact.read::<ClaimLeaseWarned>() {
-            let opened = Some(body.directive);
-            (
-                self.absorb_recorded(Steering::ClaimWarned(&body), at),
-                opened,
-            )
         } else {
             let body = fact.read::<TasteJudged>()?;
             let opened = match &body.decision {
@@ -392,9 +386,6 @@ pub fn affected_key(envelope: &wire::Envelope<wire::AnyFact>) -> Option<Key> {
             .and_then(|body| body.key.parse().ok()),
         wire::FactKind::TasteReminded => fact
             .read::<TasteReminded>()
-            .and_then(|body| body.key.parse().ok()),
-        wire::FactKind::ClaimLeaseWarned => fact
-            .read::<ClaimLeaseWarned>()
             .and_then(|body| body.key.parse().ok()),
         wire::FactKind::TasteJudged => fact.read::<TasteJudged>().and_then(|body| {
             let TasteDecision::Confirmed { key, .. } = &body.decision else {

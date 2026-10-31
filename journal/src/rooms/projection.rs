@@ -32,9 +32,6 @@ impl Projection {
             Change::Cursor { lane, seq, body } => {
                 self.cursors.insert(lane, (seq, body));
             }
-            Change::Horizon { lane, seq, body } => {
-                self.horizons.insert(lane, (seq, body));
-            }
             Change::Conversation(edit) => self.conversation.apply(edit),
             Change::MaturityNotice { seq, notice } => {
                 self.notices.insert((notice.design.to_string(), seq), ());

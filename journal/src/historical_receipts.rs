@@ -106,8 +106,45 @@ struct HistoricalCommand {
     id: wire::CanonicalUuid,
     epoch: wire::CanonicalUuid,
     kind: HistoricalKind,
-    expected: Vec<wire::Witness>,
+    expected: Vec<HistoricalWitness>,
     body: serde_json::Value,
+}
+
+/// One witness a historical request carried: a current witness, or a proposal
+/// witness over a critique or coverage subject that retired with its facts.
+#[derive(Deserialize, Serialize, PartialEq)]
+#[serde(untagged)]
+enum HistoricalWitness {
+    Current(wire::Witness),
+    Retired(RetiredWitness),
+}
+
+/// A witness kind that names only retired subjects.
+#[derive(Deserialize, Serialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+enum RetiredWitness {
+    Proposal {
+        proposal: RetiredProposal,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        head: Option<wire::Seq>,
+    },
+}
+
+/// A proposal subject whose facts retired: one critique or coverage
+/// statement over an exact candidate.
+#[derive(Deserialize, Serialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+enum RetiredProposal {
+    Critique { critique: RetiredCritique },
+    Coverage { coverage: wire::rooms::CoverageRef },
+}
+
+/// Identity of one retired critique of an exact candidate.
+#[derive(Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct RetiredCritique {
+    candidate: wire::rooms::CandidateRef,
+    critique: wire::SequenceCode,
 }
 
 pub(crate) fn create_schema(connection: &Connection) -> Result<(), OpenError> {
@@ -226,7 +263,11 @@ fn retire_receipts(
             id: retired.id,
             epoch: retired.epoch,
             kind: historical_kind,
-            expected: retired.expected,
+            expected: retired
+                .expected
+                .into_iter()
+                .map(HistoricalWitness::Current)
+                .collect(),
             body: retired.body,
         })
         .and_then(|mut value| {

@@ -11,9 +11,8 @@ use wasm_bindgen::JsCast;
 use web_sys::HtmlInputElement;
 use wire::intent::{BoardTask, TextAnswer};
 use wire::rooms::{
-    CandidateCoverage, CandidateCritique, CandidateRef, CoverageAuthority, DecisionOutcome,
-    DesignPassProposal, DesignPassRecommendation, ExecutionAuthorization, OutputVerdict,
-    PreparationDecision, RoomSource,
+    CandidateRef, DecisionOutcome, DesignPassProposal, DesignPassRecommendation,
+    ExecutionAuthorization, OutputVerdict, PreparationDecision, RoomSource,
 };
 use wire::{CommandKind, SequenceCode, TaskStamp};
 use yew::prelude::*;
@@ -391,19 +390,6 @@ fn render_candidate(
     let draft = composer.draft(&candidate.candidate).unwrap_or(&empty);
     let locked = composer.is_pending();
     let standing = standing(context.preparation, &candidate.candidate);
-    let coverage = context
-        .preparation
-        .coverage
-        .values()
-        .filter(|coverage| coverage.value.coverage.candidate == candidate.candidate)
-        .map(|coverage| &coverage.value)
-        .collect::<Vec<_>>();
-    let critiques = context
-        .preparation
-        .critiques
-        .values()
-        .filter(|critique| critique.value.critique.candidate == candidate.candidate)
-        .collect::<Vec<_>>();
     let decisions = context
         .preparation
         .decisions
@@ -469,8 +455,6 @@ fn render_candidate(
                 ProposalLine::Justification(justification) => Some(render_justification(justification)),
                 _ => None,
             })}
-            {render_critiques(&critiques)}
-            {render_coverage(context.runtime, &coverage)}
             {render_decision_history(context.runtime, &decisions, &authorizations)}
             if interactive {
                 {render_controls(context, positioned, draft, locked, &edit)}
@@ -560,64 +544,6 @@ fn render_references(candidate: &DesignPassProposal) -> Html {
                 })}
             </ul>
         </details>
-    }
-}
-
-fn render_critiques(critiques: &[&RoomPositioned<CandidateCritique>]) -> Html {
-    if critiques.is_empty() {
-        return Html::default();
-    }
-    html! {
-        <div class="room-approval-critiques">
-            <strong>{"Critiques"}</strong>
-            <ul>
-                {for critiques.iter().map(|critique| html! {
-                    <li key={critique.value.critique.critique.to_string()}>
-                        {format!(
-                            "{} · {} · {}",
-                            critique.value.critique.critique,
-                            critique.value.category,
-                            match critique.value.standing {
-                                wire::rooms::CritiqueStanding::Clean => "clean",
-                                wire::rooms::CritiqueStanding::MaterialFinding => "material finding",
-                            },
-                        )}
-                        {" · "}<code>{source_label(&critique.value.source)}</code>
-                    </li>
-                })}
-            </ul>
-        </div>
-    }
-}
-
-fn render_coverage(runtime: &AppRuntime, coverage: &[&CandidateCoverage]) -> Html {
-    if coverage.is_empty() {
-        return Html::default();
-    }
-    html! {
-        <div class="room-approval-coverage">
-            <strong>{"Review coverage"}</strong>
-            <ul aria-label="Review coverage">
-                {for coverage.iter().map(|coverage| {
-                    let by = match &coverage.authority {
-                        CoverageAuthority::Operator {} => "operator review".to_owned(),
-                        CoverageAuthority::Independent { lane, .. } => {
-                            format!("independent review by {}", lane_label(runtime, *lane))
-                        }
-                        CoverageAuthority::SelfReview { lane, .. } => {
-                            format!("self-review by {}", lane_label(runtime, *lane))
-                        }
-                    };
-                    let scopes = coverage.scopes.iter().map(ToString::to_string).collect::<Vec<_>>();
-                    html! {
-                        <li key={coverage.coverage.coverage.to_string()}>
-                            {format!("{} · {by} · {} · ", coverage.coverage.coverage, scopes.join(", "))}
-                            <code>{source_label(&coverage.source)}</code>
-                        </li>
-                    }
-                })}
-            </ul>
-        </div>
     }
 }
 

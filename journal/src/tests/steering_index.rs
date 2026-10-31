@@ -7,7 +7,7 @@ use crate::{
 };
 use wire::body::{
     LaneHeld, SteerAcked, SteerCanceled, SteerDeclined, SteerEscalated, SteerLapsed, SteerSent,
-    SteeringStage, SteeringTransition, TaskNoted, TranscriptLocus,
+    SteeringStage, SteeringTransition, TranscriptLocus,
 };
 use wire::{Disposition, Producer, SteeringHead};
 
@@ -239,14 +239,15 @@ fn steering_recovery_snapshot_excludes_unrelated_world_history() {
     journal
         .apply(send_write(uuid(TARGET), TARGET_KEY))
         .expect("steering publication applies");
-    let mut ordinary =
-        JournalWrite::new(Actor::Operator, origin(), instant(), Producer::CommandDoor);
+    let mut ordinary = JournalWrite::new(
+        Actor::Operator,
+        origin(),
+        instant(),
+        Producer::ResidentRecognition,
+    );
     ordinary
         .fact(
-            TaskNoted {
-                task: "1kKRRsDP".parse().expect("fixture task"),
-                note: "unrelated world history".to_owned(),
-            },
+            text_fact("unrelated world history".to_owned()),
             FactCause::Root,
         )
         .expect("ordinary fact builds");
@@ -255,7 +256,7 @@ fn steering_recovery_snapshot_excludes_unrelated_world_history() {
     journal
         .connection
         .execute(
-            "UPDATE fact_envelopes SET envelope = X'00' WHERE kind = 'task::noted'",
+            "UPDATE fact_envelopes SET envelope = X'00' WHERE kind = 'canary::alarmed'",
             [],
         )
         .expect("corrupt only unrelated history");

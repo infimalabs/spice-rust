@@ -85,9 +85,8 @@ fn unchanged_residency_reuses_one_canonical_decode_and_advancing_heads_invalidat
     );
     let transition = write
         .fact(
-            body::UpDraining {
+            body::UpDark {
                 epoch: advanced.epoch,
-                occupants: 1,
             },
             FactCause::Root,
         )

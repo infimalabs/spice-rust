@@ -158,9 +158,8 @@ fn lane_creation_guard_refuses_when_the_accounted_source_moves_before_commit() {
     capture.guard(&mut guarded);
     guarded
         .fact(
-            body::TaskNoted {
+            body::TaskWoken {
                 task: stamp("creation-context-guard"),
-                note: "must never commit".to_owned(),
             },
             FactCause::Root,
         )
@@ -197,9 +196,8 @@ fn lane_creation_guard_refuses_when_creator_team_moves_before_commit() {
     capture.guard(&mut guarded);
     guarded
         .fact(
-            body::TaskNoted {
+            body::TaskWoken {
                 task: stamp("creation-team-guard"),
-                note: "must never commit".to_owned(),
             },
             FactCause::Root,
         )

@@ -18,9 +18,9 @@
 use std::collections::BTreeMap;
 
 use wire::body::{
-    ClaimLeaseWarned, DirectiveAttachment, SteerAcked, SteerCanceled, SteerDeclined,
-    SteerEscalated, SteerLapsed, SteerMissed, SteerRecovered, SteerSent, SteeringStage,
-    SteeringTransition, TasteDecision, TasteJudged, TasteReminded,
+    DirectiveAttachment, SteerAcked, SteerCanceled, SteerDeclined, SteerEscalated, SteerLapsed,
+    SteerMissed, SteerRecovered, SteerSent, SteeringStage, SteeringTransition, TasteDecision,
+    TasteJudged, TasteReminded,
 };
 use wire::steering::SteerDeadLettered;
 use wire::{AgentMediaReference, CanonicalUuid, Digest, Disposition, Instant};
@@ -201,8 +201,6 @@ pub enum Steering<'a> {
     /// also carries is read by the taste plane from the same row, and never by
     /// anything here.
     Reminded(&'a TasteReminded),
-    /// A claim lease crossed its warning horizon and opened a directive.
-    ClaimWarned(&'a ClaimLeaseWarned),
     /// A judge-confirmed taste candidate opened a directive.
     ///
     /// Cleared judgments are also replayed through this arm but deliberately
@@ -258,7 +256,6 @@ impl Ledger {
         match steering {
             Steering::Sent(body) => self.send(body, at),
             Steering::Reminded(body) => self.remind(body, at),
-            Steering::ClaimWarned(body) => self.claim_warn(body, at),
             Steering::Judged(body) => self.judged(body, at),
             Steering::Escalated(body) => self.escalate(body, at),
             Steering::Recovered(body) => self.recover(body),
@@ -478,30 +475,6 @@ impl Ledger {
             expires: body.expires,
             published,
             stage: SteeringStage::Published,
-            escalations: Vec::new(),
-            disposition: Disposition::Live,
-        })
-    }
-
-    fn claim_warn(
-        &mut self,
-        body: &ClaimLeaseWarned,
-        published: Option<Instant>,
-    ) -> Result<(), Refusal> {
-        let key = read("key", &body.key)?;
-        self.open(Directive {
-            directive: body.directive,
-            fanout: None,
-            key,
-            lane: body.lane,
-            text: body.text.clone(),
-            from: None,
-            room: None,
-            control: None,
-            attachments: Vec::new(),
-            expires: body.expiry,
-            published,
-            stage: SteeringStage::Overdue,
             escalations: Vec::new(),
             disposition: Disposition::Live,
         })

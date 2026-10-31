@@ -2,10 +2,10 @@
 
 use rusqlite::{OptionalExtension, params};
 use wire::rooms::{
-    CandidateCoverage, CandidateCritique, CandidateWithdrawal, DesignPassProposal,
-    ExecutionAuthorization, PreparationDecision, ProposalRef, RoomAuthorityStamp, RoomDelivered,
-    RoomDestination, RoomLeft, RoomMessaged, RoomPublication, RoomPublished, RoomReceiptHead,
-    RoomReceiptRecord, RoomReceiptRef, WorkingGroupPartition,
+    CandidateWithdrawal, DesignPassProposal, ExecutionAuthorization, PreparationDecision,
+    ProposalRef, RoomAuthorityStamp, RoomDelivered, RoomDestination, RoomLeft, RoomMessaged,
+    RoomPublication, RoomPublished, RoomReceiptHead, RoomReceiptRecord, RoomReceiptRef,
+    WorkingGroupPartition,
 };
 
 use super::{
@@ -23,10 +23,6 @@ use support::{ROOM_AUTHORITY_PAGE, ROOM_AUTHORITY_REMAINING, probe_limit};
 pub enum ProposalAuthority {
     /// One Design pass proposal.
     Candidate(DesignPassProposal),
-    /// One critique of an exact candidate.
-    Critique(CandidateCritique),
-    /// One coverage statement over an exact candidate.
-    Coverage(CandidateCoverage),
     /// One decision under a controlling task.
     Decision(PreparationDecision),
     /// The author's withdrawal of one exact undecided candidate.
@@ -101,16 +97,6 @@ impl JournalRead<'_> {
                 &subject,
                 |body: &DesignPassProposal| body.candidate == *candidate,
                 ProposalAuthority::Candidate,
-            )?,
-            ProposalRef::Critique { critique } => self.proposal_family(
-                &subject,
-                |body: &CandidateCritique| body.critique == *critique,
-                ProposalAuthority::Critique,
-            )?,
-            ProposalRef::Coverage { coverage } => self.proposal_family(
-                &subject,
-                |body: &CandidateCoverage| body.coverage == *coverage,
-                ProposalAuthority::Coverage,
             )?,
             ProposalRef::Decision { decision } => self.proposal_family(
                 &subject,

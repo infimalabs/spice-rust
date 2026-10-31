@@ -102,9 +102,6 @@ macro_rules! registered_body {
     (RoomDelivered) => {
         crate::rooms::RoomDelivered
     };
-    (RoomHorizon) => {
-        crate::rooms::RoomHorizon
-    };
     (DesignNoticed) => {
         crate::rooms::DesignNoticed
     };
@@ -135,17 +132,8 @@ macro_rules! registered_body {
     (DesignProposed) => {
         crate::rooms::DesignProposed
     };
-    (CandidateCritiqued) => {
-        crate::rooms::CandidateCritiqued
-    };
-    (CandidateCovered) => {
-        crate::rooms::CandidateCovered
-    };
     (PreparationDecided) => {
         crate::rooms::PreparationDecided
-    };
-    (DesignNudged) => {
-        crate::rooms::DesignNudged
     };
     (CandidateWithdrawn) => {
         crate::rooms::CandidateWithdrawn
@@ -284,8 +272,6 @@ vocabulary! {
     TaskReviewed = "task::reviewed" by CommandDoor;
     /// The allocator seated a reviewer under the anti-self-review witness.
     TaskAssigned = "task::assigned" by CommandDoor;
-    /// A durable task note appended.
-    TaskNoted = "task::noted" by CommandDoor;
     /// A task received a wakeable deferral.
     TaskDeferred = "task::deferred" by CommandDoor;
     /// A task's deferral cleared.
@@ -319,8 +305,6 @@ vocabulary! {
     ClaimLapsed = "claim::lapsed" by BusTimer;
     /// The resident extended a live, epoch-bound lease within its maximum.
     ClaimRenewed = "claim::renewed" by BusTimer;
-    /// A live lease crossed its warning horizon and opened ordinary lane steering.
-    ClaimLeaseWarned = "claim::warned" by BusTimer;
 
     /// An anchor task's room received one authored or linked publication.
     RoomPublished = "room::published" by CommandDoor;
@@ -332,8 +316,6 @@ vocabulary! {
     RoomContributed = "room::contributed" by CommandDoor;
     /// A lane's room catch-up landed in its transcript and advanced its cursor.
     RoomDelivered = "room::delivered" by ResidentRecognition;
-    /// Retained predecessor for lane-global room catch-up; no longer minted.
-    RoomHorizon = "room::horizon" by ResidentRecognition;
     /// The resident told a lane about one open Design matching its claimed work.
     DesignNoticed = "room::noticed" by ResidentRecognition;
     /// The resident handed an active Design's holder its newest return decision.
@@ -356,21 +338,12 @@ vocabulary! {
 
     /// One exact completed Design pass was proposed under its controlling task.
     DesignProposed = "proposal::retained" by CommandDoor;
-    /// Retained source-backed critique of an exact Design pass proposal; no
-    /// longer minted.
-    CandidateCritiqued = "proposal::critiqued" by CommandDoor;
-    /// Retained source-backed coverage statement over an exact proposal; no
-    /// longer minted.
-    CandidateCovered = "proposal::covered" by CommandDoor;
     /// The operator decided one exact proposal.
     PreparationDecided = "proposal::decided" by CommandDoor;
     /// The author withdrew one exact undecided proposal from operator choice.
     CandidateWithdrawn = "proposal::withdrawn" by CommandDoor;
     /// A work decision made its exact accepted outputs eligible.
     ExecutionAuthorized = "proposal::authorized" by CommandDoor;
-    /// Retained operator nudge of one open Design toward its next pass; no
-    /// longer minted.
-    DesignNudged = "proposal::nudged" by CommandDoor;
 
     /// The exact normalized plan digest landed at its witnessed board barrier.
     DocApplied = "doc::applied" by CommandDoor;
@@ -416,8 +389,6 @@ vocabulary! {
     ConsentQueued = "consent::queued" by CommandDoor;
     /// The lane was renewed or removed before anyone ruled on the request.
     ConsentLapsed = "consent::lapsed" by ResidentRecognition;
-    /// A non-ACP lane's consent floor was recorded once for its occupancy.
-    ConsentFloored = "consent::floored" by CommandDoor;
 
     /// A lane and its capability were created.
     LaneSeated = "lane::seated" by ResidentRecognition;
@@ -469,10 +440,6 @@ vocabulary! {
     /// Operator authority, changed input, or expiry returned a held lane to eligibility.
     LaneResumed = "lane::resumed" by BusTimer;
 
-    /// The judge confirmed a taste at an evidence locus.
-    TasteConfirmed = "taste::confirmed" by Judge;
-    /// The judge cleared a taste at an evidence locus.
-    TasteCleared = "taste::cleared" by Judge;
     /// The resident judge durably adjudicated one live taste candidate.
     TasteJudged = "taste::judged" by Judge;
     /// A taste fired on authored prose and raised one live directive.
@@ -488,9 +455,6 @@ vocabulary! {
     CanaryAlarmed = "canary::alarmed" by ResidentRecognition;
     /// Listening meters disagreed: activity existed without decoded context.
     CanaryContradicted = "canary::contradicted" by ResidentRecognition;
-
-    /// An unproven vendor version first ran with residue measurement armed.
-    VendorArmed = "vendor::armed" by ResidentRecognition;
 
     /// An executable surface digest changed and entered quarantine.
     TrustPended = "trust::pended" by CommandDoor;
@@ -510,13 +474,6 @@ vocabulary! {
     /// One principal's issued capability was retired.
     PrincipalDeauthorized = "principal::deauthorized" by CommandDoor;
 
-    /// The resident recognized a repository commit and bound its receipt verdict.
-    CommitLanded = "commit::landed" by ResidentRecognition;
-
-    /// The resident recognized a new gate finding; the Finding head opened.
-    GateFound = "gate::found" by ResidentRecognition;
-    /// A standing finding resolved at its evidence; the Finding head closed.
-    GateCleared = "gate::cleared" by ResidentRecognition;
     /// A retired fact crossed once into inert current-schema evidence.
     JournalRetained = "journal::retained" by ResidentRecognition;
     /// The one forward schema migration finalized before epoch mint.
@@ -530,16 +487,6 @@ vocabulary! {
 
     /// The resident acquired the kernel writer lock and minted its epoch.
     UpSeated = "up::seated" by CommandDoor;
-    /// The resident stopped admission and began a graceful end.
-    UpQuiescing = "up::quiescing" by CommandDoor;
-    /// The resident began preserving admitted work and ending occupants.
-    UpDraining = "up::draining" by CommandDoor;
-    /// Grace expired and the resident began ending unfinished occupants.
-    UpTerminating = "up::terminating" by CommandDoor;
-    /// Bounded escalation began against occupants that survived termination.
-    UpKilling = "up::killing" by CommandDoor;
-    /// Occupants ended; verification of claims, seals, and residue began.
-    UpVerifying = "up::verifying" by CommandDoor;
     /// The verified terminal state committed before releasing authority.
     UpDark = "up::dark" by CommandDoor;
 
@@ -561,7 +508,6 @@ impl FactKind {
     /// classification here prevents a selective journal query from drifting
     /// away from the reducer that interprets its results.
     pub const STEERING_AUTHORITY: &[Self] = &[
-        Self::ClaimLeaseWarned,
         Self::SteerSent,
         Self::SteerEscalated,
         Self::SteerRecovered,
@@ -615,7 +561,6 @@ impl FactKind {
         match self {
             Self::TaskAdded => &[Origin, Dependency, Lifecycle],
             Self::ExecutionAuthorized => &[Dependency],
-            Self::TaskNoted => &[],
             Self::TaskPhased
             | Self::TaskDone
             | Self::TaskReviewed
@@ -804,14 +749,14 @@ impl AnyFact {
     ///
     /// ```
     /// let fact: wire::AnyFact = wire::decode(
-    ///     br#"{"kind":"taste::confirmed","taste":"polling","locus":"turn:48213#3"}"#,
+    ///     br#"{"kind":"trust::granted","surface":"spice","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#,
     /// )
     /// .expect("a registered body decodes");
     ///
     /// // The annotation is the point: an answer, or the wrong kind asked for.
-    /// let confirmed: Option<wire::body::TasteConfirmed> = fact.read();
-    /// assert_eq!(confirmed.expect("the registered kind").taste, "polling");
-    /// assert!(fact.read::<wire::body::TasteCleared>().is_none());
+    /// let granted: Option<wire::body::TrustGranted> = fact.read();
+    /// assert_eq!(granted.expect("the registered kind").surface, "spice");
+    /// assert!(fact.read::<wire::body::TrustRevoked>().is_none());
     /// ```
     #[must_use]
     pub fn read<F: Body>(&self) -> Option<F> {
@@ -839,7 +784,6 @@ impl AnyFact {
             Decoded::TaskDone(body) => (Some(&body.task), &[]),
             Decoded::TaskReviewed(body) => (Some(&body.task), &[]),
             Decoded::TaskAssigned(body) => (Some(&body.task), &[]),
-            Decoded::TaskNoted(body) => (Some(&body.task), &[]),
             Decoded::TaskDeferred(body) => (Some(&body.task), &[]),
             Decoded::TaskWoken(body) => (Some(&body.task), &[]),
             Decoded::TaskFiled(body) => (Some(&body.task), &[]),
@@ -922,8 +866,6 @@ impl AnyFact {
         use sealed::RegisteredBody as Decoded;
         match &self.decoded {
             Decoded::DesignProposed(body) => Some(&body.candidate.candidate.controller),
-            Decoded::CandidateCritiqued(body) => Some(&body.critique.critique.candidate.controller),
-            Decoded::CandidateCovered(body) => Some(&body.coverage.coverage.candidate.controller),
             Decoded::PreparationDecided(body) => Some(&body.decision.decision.controller),
             Decoded::CandidateWithdrawn(body) => Some(&body.withdrawal.candidate.controller),
             Decoded::ExecutionAuthorized(body) => Some(&body.authorization.decision.controller),
@@ -963,7 +905,6 @@ impl AnyFact {
             Decoded::ClaimFreed(body) => Some(&body.task),
             Decoded::ClaimLapsed(body) => Some(&body.task),
             Decoded::ClaimRenewed(body) => Some(&body.task),
-            Decoded::ClaimLeaseWarned(body) => Some(&body.task),
             _ => self.mutated_tasks().next(),
         }
     }

@@ -27,10 +27,11 @@ pub(crate) fn record(
         }
         return Ok(());
     }
-    if let Some(body) = fact.read::<wire::body::TasteConfirmed>() {
-        insert_judgment(connection, &body.taste, seq, true)?;
-    } else if let Some(body) = fact.read::<wire::body::TasteCleared>() {
-        insert_judgment(connection, &body.taste, seq, false)?;
+    if let Some(ruling) = fact
+        .read::<wire::body::JournalRetained>()
+        .and_then(|retained| retained.taste_ruling())
+    {
+        insert_judgment(connection, &ruling.taste, seq, ruling.confirmed)?;
     }
     Ok(())
 }

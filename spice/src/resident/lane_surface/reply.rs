@@ -420,18 +420,6 @@ fn recall_live_steering_provenance(
                 None,
             ))
         }
-        wire::FactKind::ClaimLeaseWarned => {
-            let body: wire::body::ClaimLeaseWarned = recall_body(fact)?;
-            Some(steering_provenance(
-                Some(body.directive),
-                body.key,
-                wire::Disposition::Live,
-                Some(wire::body::SteeringStage::Overdue),
-                Vec::new(),
-                None,
-                None,
-            ))
-        }
         _ => None,
     };
     Ok(provenance)

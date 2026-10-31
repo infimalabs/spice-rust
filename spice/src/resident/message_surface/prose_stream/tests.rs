@@ -44,9 +44,8 @@ fn completed_ack_is_visible_before_settlement_and_survives_settled_variants() {
         );
         write
             .fact(
-                wire::body::TaskNoted {
+                wire::body::TaskWoken {
                     task: "1kQwPZtK".parse().expect("fixture task"),
-                    note: "message publisher authority".to_owned(),
                 },
                 journal::FactCause::Root,
             )

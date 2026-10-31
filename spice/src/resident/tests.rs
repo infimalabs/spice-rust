@@ -226,11 +226,6 @@ fn resident_shutdown_releases_handles_without_ending_lane_work() {
     let holds = |kind| snapshot.facts().iter().any(|fact| fact.fact.kind() == kind);
     assert!(holds(wire::FactKind::UpDark));
     for kind in [
-        wire::FactKind::UpQuiescing,
-        wire::FactKind::UpDraining,
-        wire::FactKind::UpTerminating,
-        wire::FactKind::UpKilling,
-        wire::FactKind::UpVerifying,
         wire::FactKind::LaneDrained,
         wire::FactKind::LaneKilled,
         wire::FactKind::LaneExited,

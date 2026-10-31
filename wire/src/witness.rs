@@ -712,7 +712,7 @@ pub enum Witness {
     },
     /// One proposal-authority subject's current head, or witnessed absence.
     Proposal {
-        /// Exact candidate, critique, coverage, or decision subject.
+        /// Exact candidate, decision, or withdrawal subject.
         proposal: ProposalRef,
         /// Current authority head, absent before its first recording.
         #[serde(

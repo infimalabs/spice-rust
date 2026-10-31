@@ -8,9 +8,9 @@ use wire::{LaneResidency, Origin, Producer, ResidentState};
 fn trailing_generations_project_private_claimant_notices_without_steering() {
     let fixture = LaunchFixture::new();
     let (bus, task) = claimed_fixture(&fixture);
-    note(&bus, &task, Actor::Lane(fixture.lane));
-    note(&bus, &task, Actor::Operator);
-    note(&bus, &task, Actor::Lane(fixture.lane));
+    wake(&bus, &task, Actor::Lane(fixture.lane));
+    wake(&bus, &task, Actor::Operator);
+    wake(&bus, &task, Actor::Lane(fixture.lane));
     let snapshot = bus.task_snapshot().expect("noted snapshot reads");
     let claim = snapshot.tasks()[0].claim().expect("claim head").body();
 
@@ -87,8 +87,8 @@ fn trailing_generations_project_private_claimant_notices_without_steering() {
 fn acknowledgement_clears_prior_generations_and_a_later_edit_gets_a_new_identity() {
     let fixture = LaunchFixture::new();
     let (bus, task) = claimed_fixture(&fixture);
-    note(&bus, &task, Actor::Operator);
-    note(&bus, &task, Actor::Operator);
+    wake(&bus, &task, Actor::Operator);
+    wake(&bus, &task, Actor::Operator);
     let before = bus.task_snapshot().expect("changed snapshot reads");
     let prior = notices(&bus, &before).expect("prior notices project");
     assert_eq!(prior.len(), 2);
@@ -102,7 +102,7 @@ fn acknowledgement_clears_prior_generations_and_a_later_edit_gets_a_new_identity
         "successful acknowledgement retires every prior reminder",
     );
 
-    note(&bus, &task, Actor::Operator);
+    wake(&bus, &task, Actor::Operator);
     let changed = bus.task_snapshot().expect("later snapshot reads");
     let [(_, later)] = notices(&bus, &changed)
         .expect("later notice projects")
@@ -373,18 +373,16 @@ fn claimed_fixture_with_deadlines(
     (bus, task)
 }
 
-fn note(bus: &Bus, task: &TaskStamp, actor: Actor) {
+/// Change `task` as `actor` with a wake, which mutates it and nothing else.
+fn wake(bus: &Bus, task: &TaskStamp, actor: Actor) {
     let mut write = JournalWrite::new(actor, task_origin(task), now(), Producer::CommandDoor);
     write
         .fact(
-            wire::body::TaskNoted {
-                task: task.clone(),
-                note: "durable context".to_owned(),
-            },
+            wire::body::TaskWoken { task: task.clone() },
             FactCause::Root,
         )
-        .expect("task note builds");
-    committed(bus.commit(write).expect("task note commits"));
+        .expect("task wake builds");
+    committed(bus.commit(write).expect("task wake commits"));
 }
 
 /// How one statement write treats the taste hold.

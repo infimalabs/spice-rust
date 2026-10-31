@@ -383,12 +383,16 @@ fn first_pass_needs_steeped_maturity_or_a_nudge() {
     let mut nudged = Journal::new();
     nudged.lane(&contributed(DESIGN, 1, RoomContributionKind::charge(0)));
     assert_eq!(nudged.cycle(false), DesignCycle::GatheringInput);
-    nudged.operator(&any(DesignNudged {
-        design: design(),
-        message: None,
-        recipient: None,
-    }));
+    nudged.operator(&retained_nudge());
     assert_eq!(nudged.cycle(false), DesignCycle::ReadyForProposal);
+}
+
+/// An operator nudge of the Design, as a journal retains it.
+fn retained_nudge() -> AnyFact {
+    any(JournalRetained {
+        release: "schema-107".to_owned(),
+        fact: serde_json::json!({ "kind": RetainedNudge::KIND, "design": design() }),
+    })
 }
 
 /// `subject` is born with `intent`, prepared under the Design when `report`.
@@ -469,15 +473,7 @@ fn only_counted_input_after_the_horizon_refills_a_design() {
             false,
             contributed(DESIGN, 2, RoomContributionKind::charge(0)),
         ),
-        (
-            "nudge",
-            true,
-            any(DesignNudged {
-                design: design(),
-                message: None,
-                recipient: None,
-            }),
-        ),
+        ("nudge", true, retained_nudge()),
         ("task-routed MSG", true, posted(task_route())),
         ("context MSG", true, posted(context_route())),
         (

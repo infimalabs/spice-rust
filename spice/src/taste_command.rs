@@ -7,9 +7,7 @@ use serde::Serialize;
 use spice::ambient::Ambient;
 use spice::config::LoadError;
 use spice::repository::Repository;
-use wire::body::{
-    TasteCleared, TasteConfirmed, TasteDecision, TasteJudgeAttempt, TasteJudged, TasteReminded,
-};
+use wire::body::{JournalRetained, TasteDecision, TasteJudgeAttempt, TasteJudged, TasteReminded};
 use wire::intent::{CommandAnswer, TaskAdd, TaskAnswer};
 use wire::{
     CanonicalUuid, ConfigSource, Digest, Disposition, Domain, Fault, FaultClass, Instant, Name,
@@ -839,16 +837,19 @@ fn fire_evidence(envelope: &wire::Envelope<wire::AnyFact>) -> Option<FireEvidenc
 }
 
 fn indexed_judgment(envelope: &wire::Envelope<wire::AnyFact>) -> Option<(String, TasteJudgment)> {
-    if let Some(body) = envelope.fact.read::<TasteConfirmed>() {
+    if let Some(ruling) = envelope
+        .fact
+        .read::<JournalRetained>()
+        .and_then(|retained| retained.taste_ruling())
+    {
+        let verdict = if ruling.confirmed {
+            Verdict::Confirmed
+        } else {
+            Verdict::Cleared
+        };
         return Some((
-            body.taste,
-            historical_judgment(envelope, Verdict::Confirmed, body.locus),
-        ));
-    }
-    if let Some(body) = envelope.fact.read::<TasteCleared>() {
-        return Some((
-            body.taste,
-            historical_judgment(envelope, Verdict::Cleared, body.locus),
+            ruling.taste,
+            historical_judgment(envelope, verdict, ruling.locus),
         ));
     }
     let body = envelope.fact.read::<TasteJudged>()?;

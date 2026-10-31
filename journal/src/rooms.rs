@@ -17,10 +17,10 @@ use std::collections::BTreeMap;
 
 use wire::principal::ActingPrincipal;
 use wire::rooms::{
-    CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateWithdrawn, CoverageAuthority,
-    DesignProposed, ExecutionAuthorized, PreparationDecided, ProposalRef, RoomAuthorityStamp,
-    RoomContributed, RoomDelivered, RoomHorizon, RoomLeft, RoomMessaged, RoomPublicationContent,
-    RoomPublished, RoomSource, WorkingGroupMoved, WorkingGroupPartition, WorkingGroupsArranged,
+    CandidateWithdrawn, DesignProposed, ExecutionAuthorized, PreparationDecided, ProposalRef,
+    RoomAuthorityStamp, RoomContributed, RoomDelivered, RoomLeft, RoomMessaged,
+    RoomPublicationContent, RoomPublished, RoomSource, WorkingGroupMoved, WorkingGroupPartition,
+    WorkingGroupsArranged,
 };
 use wire::{
     Actor, AnyFact, CanonicalUuid, Instant, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead,
@@ -117,15 +117,6 @@ CREATE TABLE room_cursors (
 ) STRICT;
 "#;
 
-/// Per-lane room catch-up horizons, created with the current schema.
-pub(crate) const HORIZON_SCHEMA_SQL: &str = r#"
-CREATE TABLE room_horizons (
-    lane TEXT PRIMARY KEY,
-    head_seq INTEGER NOT NULL UNIQUE REFERENCES fact_envelopes(seq),
-    body BLOB NOT NULL
-) STRICT;
-"#;
-
 /// Why the fold could not admit one fact.
 #[derive(Debug)]
 pub(crate) enum Refusal {
@@ -198,8 +189,6 @@ pub(crate) struct Projection {
     pub(crate) authorizations: BTreeMap<(String, String), AuthorizationRow>,
     /// Logical lane to its catch-up cursor head position and canonical body.
     pub(crate) cursors: BTreeMap<String, (u64, Vec<u8>)>,
-    /// Logical lane to its catch-up horizon position and canonical body.
-    pub(crate) horizons: BTreeMap<String, (u64, Vec<u8>)>,
     /// Conversation publications with their operator item heads.
     pub(crate) conversation: conversation::Heads,
 }
@@ -258,8 +247,6 @@ pub(crate) trait Authority {
     fn request_at(&self, seq: u64) -> Result<bool, Refusal>;
     /// The canonical body of one lane's current catch-up cursor.
     fn cursor(&self, lane: &str) -> Result<Option<Vec<u8>>, Refusal>;
-    /// Whether one lane already has a catch-up horizon.
-    fn horizon(&self, lane: &str) -> Result<bool, Refusal>;
     /// The canonical body of the current working-group partition.
     fn group_partition(&self) -> Result<Option<Vec<u8>>, Refusal>;
     /// Canonical body of the current repository OOPS generation.
@@ -309,11 +296,6 @@ pub(crate) enum Change {
         row: AuthorizationRow,
     },
     Cursor {
-        lane: String,
-        seq: u64,
-        body: Vec<u8>,
-    },
-    Horizon {
         lane: String,
         seq: u64,
         body: Vec<u8>,
@@ -492,8 +474,8 @@ fn advance_oops_generation(
     })
 }
 
-/// Admit one candidate, critique, coverage, decision, withdrawal, or
-/// authorization fact, or `None` when `fact` is none of them.
+/// Admit one candidate, decision, withdrawal, or authorization fact, or
+/// `None` when `fact` is none of them.
 fn fold_preparation(
     authority: &mut impl Authority,
     seq: Seq,
@@ -502,12 +484,6 @@ fn fold_preparation(
 ) -> Option<Result<(), Refusal>> {
     if let Some(DesignProposed { candidate }) = fact.read() {
         return Some(preparation::retain(authority, seq, candidate));
-    }
-    if let Some(CandidateCritiqued { critique }) = fact.read() {
-        return Some(critique_candidate(authority, seq, &critique));
-    }
-    if let Some(CandidateCovered { coverage }) = fact.read() {
-        return Some(cover(authority, seq, actor, coverage));
     }
     if let Some(PreparationDecided { decision }) = fact.read() {
         return Some(
@@ -524,28 +500,7 @@ fn fold_preparation(
                 .and_then(|()| preparation::authorize(authority, seq, authorization)),
         );
     }
-    if fact.kind() == wire::FactKind::DesignNudged {
-        return Some(require_operator(actor, "a Design nudge"));
-    }
     None
-}
-
-/// Admit one critique of an existing candidate citing an admissible source.
-fn critique_candidate(
-    authority: &mut impl Authority,
-    seq: Seq,
-    critique: &wire::rooms::CandidateCritique,
-) -> Result<(), Refusal> {
-    let assessed = ProposalRef::Candidate {
-        candidate: critique.critique.candidate.clone(),
-    };
-    require_proposal(authority, &assessed)?;
-    require_source(authority, seq, &critique.source)?;
-    let controller = critique.critique.candidate.controller.to_string();
-    let proposal = ProposalRef::Critique {
-        critique: critique.critique.clone(),
-    };
-    record(authority, seq, &proposal, controller, critique)
 }
 
 /// Admit one steering, catch-up, conversation, or leave fact, or `None`
@@ -584,11 +539,8 @@ fn fold_traffic(
                 .and_then(|()| authority.change(Change::MaturityLeave(body))),
         );
     }
-    if let Some(body) = fact.read::<RoomContributed>() {
-        return Some(contribute(authority, seq, actor, &body));
-    }
-    fact.read::<RoomHorizon>()
-        .map(|body| begin(authority, seq, actor, &body))
+    fact.read::<RoomContributed>()
+        .map(|body| contribute(authority, seq, actor, &body))
 }
 
 /// Whether `actor` acts as a born principal. The fold replays immutable
@@ -645,30 +597,6 @@ fn deliver(
     })
 }
 
-/// The resident records one horizon for a lane that no delivery has ever
-/// advanced; a lane with a cursor or an earlier horizon already has its start.
-fn begin(
-    authority: &mut impl Authority,
-    seq: Seq,
-    actor: &Actor,
-    horizon: &RoomHorizon,
-) -> Result<(), Refusal> {
-    if *actor != Actor::Spice {
-        return unsound(format!(
-            "a room catch-up horizon is resident-owned, not written by {actor}"
-        ));
-    }
-    let lane = horizon.lane.to_string();
-    if authority.cursor(&lane)?.is_some() || authority.horizon(&lane)? {
-        return unsound(format!("lane {lane} already has a room catch-up start"));
-    }
-    authority.change(Change::Horizon {
-        lane,
-        seq: seq.get(),
-        body: wire::encode(horizon)?,
-    })
-}
-
 /// A contribution is its own lane's bounded text, and each source it cites is
 /// authority that exists before it. A question item is named only at a
 /// recorded statement head. Its Design's openness is checked against stored
@@ -722,42 +650,6 @@ fn contribute(
         }
     }
     authority.change(Change::MaturityContribution(body.clone()))
-}
-
-/// Coverage authority is the principal that wrote it: the operator, an
-/// independent lane, or the candidate's own authoring lane labeled as
-/// self-review.
-fn cover(
-    authority: &mut impl Authority,
-    seq: Seq,
-    actor: &Actor,
-    coverage: CandidateCoverage,
-) -> Result<(), Refusal> {
-    let assessed = ProposalRef::Candidate {
-        candidate: coverage.coverage.candidate.clone(),
-    };
-    require_proposal(authority, &assessed)?;
-    let author = authority.proposal_author(&subject(&assessed)?)?;
-    let admitted = match &coverage.authority {
-        CoverageAuthority::Operator {} => is_principal(actor),
-        CoverageAuthority::Independent { lane, .. } => {
-            *actor == Actor::Lane(*lane) && author.as_ref() != Some(actor)
-        }
-        CoverageAuthority::SelfReview { lane, .. } => {
-            *actor == Actor::Lane(*lane) && author.as_ref() == Some(actor)
-        }
-    };
-    if !admitted {
-        return unsound(format!(
-            "coverage authority disagrees with its writer {actor} and the candidate's author"
-        ));
-    }
-    require_source(authority, seq, &coverage.source)?;
-    let controller = coverage.coverage.candidate.controller.to_string();
-    let proposal = ProposalRef::Coverage {
-        coverage: coverage.coverage.clone(),
-    };
-    record(authority, seq, &proposal, controller, &coverage)
 }
 
 fn control(

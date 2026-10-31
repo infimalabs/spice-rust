@@ -61,17 +61,11 @@ fn new_journals_start_at_the_four_character_sequence_boundary() {
         Actor::Operator,
         "task:1kKRRsDP".parse().expect("fixture origin"),
         instant(),
-        wire::Producer::CommandDoor,
+        wire::Producer::ResidentRecognition,
     );
     for note in ["first fact", "second fact"] {
         first
-            .fact(
-                wire::body::TaskNoted {
-                    task: "1kKRRsDP".parse().expect("fixture task"),
-                    note: note.to_owned(),
-                },
-                crate::FactCause::Root,
-            )
+            .fact(text_fact(note.to_owned()), crate::FactCause::Root)
             .expect("initial fact builds");
     }
     let first = journal.apply(first).expect("initial facts commit");
@@ -88,13 +82,10 @@ fn new_journals_start_at_the_four_character_sequence_boundary() {
         Actor::Operator,
         "task:1kKRRsDP".parse().expect("fixture origin"),
         instant(),
-        wire::Producer::CommandDoor,
+        wire::Producer::ResidentRecognition,
     );
     next.fact(
-        wire::body::TaskNoted {
-            task: "1kKRRsDP".parse().expect("fixture task"),
-            note: "next fact".to_owned(),
-        },
+        text_fact("next fact".to_owned()),
         crate::FactCause::Existing(second_sequence),
     )
     .expect("next fact builds");
@@ -277,14 +268,11 @@ fn reader_verification_keeps_every_plane_on_the_snapshot_before_a_concurrent_com
                 Actor::Operator,
                 "task:1kKRRsDP".parse().expect("fixture origin"),
                 instant(),
-                wire::Producer::CommandDoor,
+                wire::Producer::ResidentRecognition,
             );
             write
                 .fact(
-                    wire::body::TaskNoted {
-                        task: "1kKRRsDP".parse().expect("fixture task"),
-                        note: "committed between verification planes".to_owned(),
-                    },
+                    text_fact("committed between verification planes".to_owned()),
                     crate::FactCause::Existing(seq(2)),
                 )
                 .expect("concurrent fact builds");
@@ -598,8 +586,8 @@ fn structure_defect_fixture() -> Journal {
         fact(
             4,
             None,
-            FactKind::TaskNoted,
-            json!({"task": "1kKRRsDP", "note": "Journal fixture note"}),
+            FactKind::CanaryAlarmed,
+            text_body("Journal fixture fact".to_owned()),
         ),
     );
     journal
@@ -1194,7 +1182,6 @@ fn expected_tables() -> BTreeSet<String> {
         "release_landings",
         "room_conversations",
         "room_cursors",
-        "room_horizons",
         "room_items",
         "room_publications",
         "steering_heads",
@@ -1225,6 +1212,22 @@ fn digest(nibble: &str) -> Digest {
 
 fn instant() -> Instant {
     "2030-04-12T18:44:09.271Z".parse().expect("fixture instant")
+}
+
+/// A current fact of arbitrary size that no projection folds: a resident
+/// canary alarm whose expected event is `text`. Its producer is
+/// [`wire::Producer::ResidentRecognition`].
+fn text_fact(text: String) -> wire::body::CanaryAlarmed {
+    wire::body::CanaryAlarmed {
+        lane: uuid("018f82d4-6f59-7d06-92e3-bce913116303"),
+        expected: text,
+        window: instant(),
+    }
+}
+
+/// [`text_fact`] as the raw body of a planted [`FactKind::CanaryAlarmed`] row.
+fn text_body(text: String) -> serde_json::Value {
+    serde_json::to_value(text_fact(text)).expect("fixture body encodes")
 }
 
 /// One millisecond before [`instant`], the finest step the spelling admits.

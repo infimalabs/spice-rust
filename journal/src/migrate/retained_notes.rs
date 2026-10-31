@@ -1,12 +1,15 @@
 //! Index every retained task note into its task's room once.
 //!
-//! The room fold indexes each `task::noted` fact that is not a taste-review
+//! The room fold indexes each retained task note that is not a taste-review
 //! audit into its task's room. A predecessor's projection holds none of them,
-//! so the crossing folds each retained note against the stored authority in
-//! journal order, exactly as verification replays it. A note whose
-//! publication identity its room already holds refuses the crossing.
+//! so the crossing folds each retained note, already spelled as
+//! [`wire::body::JournalRetained`] evidence by the orphan-fact crossing,
+//! against the stored authority in journal order, exactly as verification
+//! replays it. A note whose publication identity its room already holds
+//! refuses the crossing.
 
-use rusqlite::Transaction;
+use rusqlite::{Transaction, params};
+use wire::body::RetainedTaskNote;
 use wire::{AnyFact, Envelope, FactKind};
 
 use super::{OpenError, residual};
@@ -16,12 +19,16 @@ const ROOMLESS_NOTES_RELEASE: &str = "schema-75";
 
 pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
     let mut statement = transaction
-        .prepare("SELECT seq, envelope FROM fact_envelopes WHERE kind = ?1 ORDER BY seq")
+        .prepare(
+            "SELECT seq, envelope FROM fact_envelopes WHERE kind = ?1 \
+             AND json_extract(CAST(envelope AS TEXT), '$.fact.fact.kind') = ?2 ORDER BY seq",
+        )
         .map_err(OpenError::Sqlite)?;
     let rows = statement
-        .query_map([FactKind::TaskNoted.as_str()], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
-        })
+        .query_map(
+            params![FactKind::JournalRetained.as_str(), RetainedTaskNote::KIND],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+        )
         .map_err(OpenError::Sqlite)?;
     let mut stored = crate::rooms::Stored::new(transaction);
     for row in rows {

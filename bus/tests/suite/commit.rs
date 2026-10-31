@@ -210,12 +210,13 @@ fn multi_page_task_snapshots_resume_then_decode_only_the_committed_tail() {
         Actor::Operator,
         "task:BUS-a1".parse().expect("origin"),
         instant("2030-04-12T18:44:11.271Z"),
-        Producer::CommandDoor,
+        Producer::ResidentRecognition,
     );
     tail.fact(
-        body::TaskNoted {
-            task: stamp(),
-            note: "one proportional tail".to_owned(),
+        body::CanaryAlarmed {
+            lane: uuid(COMMAND_ONE),
+            expected: "one proportional tail".to_owned(),
+            window: instant("2030-04-12T18:44:11.271Z"),
         },
         FactCause::Existing(last),
     )
@@ -280,8 +281,8 @@ fn multi_page_task_snapshots_resume_then_decode_only_the_committed_tail() {
         after
             .facts()
             .at(committed_tail[0].seq)
-            .and_then(|fact| fact.fact.read::<body::TaskNoted>())
-            .map(|note| note.note),
+            .and_then(|fact| fact.fact.read::<body::CanaryAlarmed>())
+            .map(|alarm| alarm.expected),
         Some("one proportional tail".to_owned()),
         "a position in the newest chunk is answered from that chunk"
     );
@@ -815,8 +816,8 @@ fn assert_shared_fact_prefix(before: &bus::TaskSnapshot, after: &bus::TaskSnapsh
             .facts()
             .iter()
             .last()
-            .and_then(|fact| fact.fact.read::<body::TaskNoted>())
-            .map(|note| note.note),
+            .and_then(|fact| fact.fact.read::<body::CanaryAlarmed>())
+            .map(|alarm| alarm.expected),
         Some("one proportional tail".to_owned())
     );
 }
@@ -1265,10 +1266,7 @@ fn note_write(
     }));
     write
         .fact(
-            body::TaskNoted {
-                task: stamp(),
-                note: "writer observation".to_owned(),
-            },
+            body::TaskWoken { task: stamp() },
             FactCause::Existing(Seq::new(expected_cursor).expect("existing cause")),
         )
         .expect("registered command-door fact");
@@ -1301,10 +1299,7 @@ fn cross_origin_write() -> JournalWrite {
     );
     write
         .fact(
-            body::TaskNoted {
-                task: stamp(),
-                note: "invalid cross-origin cause".to_owned(),
-            },
+            body::TaskWoken { task: stamp() },
             FactCause::Existing(Seq::new(INITIAL_SEQUENCE).expect("existing cause")),
         )
         .expect("registered command-door fact");

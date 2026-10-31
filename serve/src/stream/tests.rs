@@ -99,15 +99,9 @@ fn commit_notes(bus: &Bus, notes: usize, trust: bool) -> JournalCommit {
     );
     let task: wire::TaskStamp = "1kKRRsDP".parse().expect("task stamp");
     let mut cause = FactCause::Root;
-    for index in 0..notes {
+    for _ in 0..notes {
         let fact = write
-            .fact(
-                body::TaskNoted {
-                    task: task.clone(),
-                    note: format!("note {index}"),
-                },
-                cause,
-            )
+            .fact(body::TaskWoken { task: task.clone() }, cause)
             .expect("fact builds");
         cause = FactCause::Pending(fact);
     }
