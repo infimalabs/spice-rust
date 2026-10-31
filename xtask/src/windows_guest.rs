@@ -206,44 +206,48 @@ impl Context {
         &self,
         lane: Option<&wire::CanonicalUuid>,
     ) -> Result<GuestResource, WindowsGuestError> {
-        match self
-            .resources
-            .try_acquire("windows-guest", None)
-            .map_err(|error| format!("cannot acquire windows-guest resource: {error}"))?
-        {
-            sill::LockAttempt::Acquired(shard) => Ok(GuestResource::Held { _shard: shard }),
-            sill::LockAttempt::Contended { .. } if self.claim_owned_by(lane)? => {
-                Ok(GuestResource::Borrowed)
-            }
-            sill::LockAttempt::Contended { .. } => Err(
-                "the windows-guest resource is held by another claim or process"
-                    .to_owned()
-                    .into(),
-            ),
-        }
+        acquire_guest_resource(&self.resources, lane)
     }
+}
 
-    fn claim_owned_by(
-        &self,
-        lane: Option<&wire::CanonicalUuid>,
-    ) -> Result<bool, WindowsGuestError> {
-        let Some(lane) = lane else {
-            return Ok(false);
-        };
-        let report = self
-            .resources
-            .report()
-            .map_err(|error| format!("cannot inspect windows-guest resource: {error}"))?;
-        Ok(report
-            .pools
-            .iter()
-            .find(|pool| pool.name == "windows-guest")
-            .into_iter()
-            .flat_map(|pool| &pool.entries)
-            .filter_map(|entry| entry.owner.as_ref())
-            .filter_map(|owner| owner.context.as_deref())
-            .any(|context| claim_context_owned_by(context, lane)))
+fn acquire_guest_resource(
+    resources: &sill::LockTopology,
+    lane: Option<&wire::CanonicalUuid>,
+) -> Result<GuestResource, WindowsGuestError> {
+    match resources.try_acquire("windows-guest", None) {
+        Ok(sill::LockAttempt::Acquired(shard)) => Ok(GuestResource::Held { _shard: shard }),
+        Ok(sill::LockAttempt::Contended { .. }) if claim_owned_by(resources, lane)? => {
+            Ok(GuestResource::Borrowed)
+        }
+        Ok(sill::LockAttempt::Contended { .. }) => Err(
+            "the windows-guest resource is held by another claim or process"
+                .to_owned()
+                .into(),
+        ),
+        Err(sill::LockSurfaceError::UnknownName(_)) => Ok(GuestResource::Unguarded),
+        Err(error) => Err(format!("cannot acquire windows-guest resource: {error}").into()),
     }
+}
+
+fn claim_owned_by(
+    resources: &sill::LockTopology,
+    lane: Option<&wire::CanonicalUuid>,
+) -> Result<bool, WindowsGuestError> {
+    let Some(lane) = lane else {
+        return Ok(false);
+    };
+    let report = resources
+        .report()
+        .map_err(|error| format!("cannot inspect windows-guest resource: {error}"))?;
+    Ok(report
+        .pools
+        .iter()
+        .find(|pool| pool.name == "windows-guest")
+        .into_iter()
+        .flat_map(|pool| &pool.entries)
+        .filter_map(|entry| entry.owner.as_ref())
+        .filter_map(|owner| owner.context.as_deref())
+        .any(|context| claim_context_owned_by(context, lane)))
 }
 
 fn claim_context_owned_by(context: &str, lane: &wire::CanonicalUuid) -> bool {
@@ -253,6 +257,7 @@ fn claim_context_owned_by(context: &str, lane: &wire::CanonicalUuid) -> bool {
 enum GuestResource {
     Held { _shard: sill::HeldShard },
     Borrowed,
+    Unguarded,
 }
 
 fn provision(
@@ -469,6 +474,19 @@ fn sha256_file(path: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unconfigured_pool_leaves_guest_commands_unguarded() {
+        let root = std::env::current_dir().expect("fixture worktree root");
+        let config = sill::LockConfig::new(75, 76, 77, std::iter::empty())
+            .expect("empty lock configuration");
+        let topology = sill::LockTopology::new(&root, &config);
+
+        assert!(matches!(
+            acquire_guest_resource(&topology, None),
+            Ok(GuestResource::Unguarded)
+        ));
+    }
 
     #[test]
     fn only_the_lane_named_by_claim_owner_context_may_borrow() {

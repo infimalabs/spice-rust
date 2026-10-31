@@ -231,6 +231,44 @@ fn lifecycle_precedence_follows_task_status_standings() {
 }
 
 #[test]
+fn configured_resource_scarcity_is_scheduler_waiting_not_operator_attention() {
+    let name: wire::ResourcePoolName = "windows-guest".parse().expect("fixture resource name");
+    let mut waiting = task(11, "alpha.resources");
+    waiting.statement.body.requirements = wire::EnvironmentRequirements::one(
+        wire::EnvironmentRequirement::resource_pool(name.clone(), 1).expect("fixture shard count"),
+    );
+    waiting.statement.body.resources =
+        wire::ResourceRequirements::new([(name.clone(), 1)]).expect("fixture declaration");
+    let mut board = board(vec![waiting]);
+    board.environment = board.environment.with_resource_pool(name, 0);
+    let projection = WorkProjection::from_board(&board);
+
+    assert_eq!(
+        projection.tasks()[0].availability(),
+        WorkAvailability::Waiting,
+    );
+    assert!(!projection.tasks()[0].environment_blocked());
+    assert!(operator::OperatorQueue::new(&projection).waits().is_empty());
+}
+
+#[test]
+fn missing_declared_resource_is_operator_actionable_configuration_work() {
+    let name: wire::ResourcePoolName = "windows-guest".parse().expect("fixture resource name");
+    let mut blocked = task(11, "alpha.resources");
+    blocked.statement.body.requirements = wire::EnvironmentRequirements::one(
+        wire::EnvironmentRequirement::resource_pool(name.clone(), 1).expect("fixture shard count"),
+    );
+    blocked.statement.body.resources =
+        wire::ResourceRequirements::new([(name, 1)]).expect("fixture declaration");
+    let board = board(vec![blocked]);
+    let projection = WorkProjection::from_board(&board);
+
+    assert_eq!(projection.tasks()[0].availability(), WorkAvailability::Held,);
+    assert!(projection.tasks()[0].environment_blocked());
+    assert_eq!(operator::OperatorQueue::new(&projection).waits().len(), 1);
+}
+
+#[test]
 fn gathering_designs_are_passive_while_selected_work_waits() {
     use wire::rooms::DesignCycle;
 

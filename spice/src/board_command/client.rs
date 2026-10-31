@@ -1289,6 +1289,22 @@ pub(crate) fn dispatch_with_repository(
     dispatch_with_resources(bus, command, repository, allocation, profiles, None)
 }
 
+fn validate_explicit_resources(
+    resources: &resources::ResourceClaims,
+    command: &wire::AdmittedCommand,
+) -> Result<(), Outcome<CommandAnswer>> {
+    match command.body() {
+        wire::intent::Intent::TaskAdd(add) => resources.validate(&add.requirements),
+        wire::intent::Intent::TaskEdit(edit) => match &edit.requirements {
+            Some(wire::intent::TaskRequirementsEdit::Set { requirements }) => {
+                resources.validate(requirements)
+            }
+            Some(wire::intent::TaskRequirementsEdit::Clear {}) | None => Ok(()),
+        },
+        _ => Ok(()),
+    }
+}
+
 pub(crate) fn dispatch_with_resources(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -1304,6 +1320,11 @@ pub(crate) fn dispatch_with_resources(
         return Some(outcome);
     }
     if let Some(outcome) = dispatch_settlement(bus, command) {
+        return Some(outcome);
+    }
+    if let Some(resources) = resources
+        && let Err(outcome) = validate_explicit_resources(resources, command)
+    {
         return Some(outcome);
     }
 

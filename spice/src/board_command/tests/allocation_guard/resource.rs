@@ -55,6 +55,38 @@ fn next_with_resources(
     .expect("resource-aware allocation reads")
 }
 
+fn board_with_resources(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    actor: Actor,
+    resources: &resources::ResourceClaims,
+) -> BoardAnswer {
+    let command = fixture_command(
+        epoch,
+        actor,
+        CommandKind::BoardRead,
+        Vec::new(),
+        &BoardRead::All { family: None },
+    );
+    let outcome = dispatch_with_resources(
+        bus,
+        &command,
+        None,
+        &board::NextConfig::default(),
+        None,
+        Some(resources),
+    )
+    .expect("board command owns resource-aware reads");
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::Board(answer),
+        ..
+    }) = outcome
+    else {
+        panic!("resource-aware board read did not answer: {outcome:?}");
+    };
+    *answer
+}
+
 fn candidate(answer: &BoardAnswer) -> Option<TaskHandle> {
     match answer.next.as_ref() {
         Some(NextWorkState::Candidate { task }) => Some(TaskHandle::for_filing(
@@ -103,7 +135,9 @@ fn assert_declared_resources(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle)
 
 fn assert_capacity_gates(
     bus: &Bus,
+    epoch: CanonicalUuid,
     actor: &Actor,
+    task: &TaskHandle,
     resources: &resources::ResourceClaims,
     external: &sill::LockTopology,
 ) {
@@ -121,6 +155,11 @@ fn assert_capacity_gates(
             .resource_pools
             .get(&"windows-guest".parse().expect("fixture resource name")),
         Some(&0),
+    );
+    let visible = board_with_resources(bus, epoch, actor.clone(), resources);
+    assert!(
+        task_show(&visible, at(&visible, task), &[]).contains("environment waiting"),
+        "a configured pool with insufficient free shards is waiting, not blocked"
     );
     drop(external_guard);
     let emulator_guard = match external
@@ -240,6 +279,15 @@ fn restored_claims(
     resources
 }
 
+fn unconfigured_claims(root: &std::path::Path) -> resources::ResourceClaims {
+    let root = root
+        .canonicalize()
+        .expect("fixture authority root canonicalizes");
+    let config =
+        sill::LockConfig::new(75, 76, 77, std::iter::empty()).expect("empty lock configuration");
+    resources::ResourceClaims::new(sill::LockTopology::new(&root, &config))
+}
+
 #[test]
 fn one_shard_serializes_allocation_and_releases_after_claim_free() {
     let (root, bus, epoch, seats) = fixture("resource-allocation", 2);
@@ -253,7 +301,7 @@ fn one_shard_serializes_allocation_and_releases_after_claim_free() {
     let (resources, external) = resource_surfaces(&root);
     let first_actor = Actor::Lane(seats[0].lane);
     let second_actor = Actor::Lane(seats[1].lane);
-    assert_capacity_gates(&bus, &first_actor, &resources, &external);
+    assert_capacity_gates(&bus, epoch, &first_actor, &first, &resources, &external);
     let available = next_with_resources(&bus, first_actor.clone(), &resources);
     assert_eq!(candidate(&available), Some(first.clone()));
     assert_eq!(
@@ -266,6 +314,11 @@ fn one_shard_serializes_allocation_and_releases_after_claim_free() {
     let first_command = claim_next_command(epoch, &first_actor, &first_board, &first, &seats[0]);
     claim_after_all_or_none_race(&bus, &first_command, &resources, &external, seats[0].lane);
     drop(resources);
+    let unconfigured = unconfigured_claims(&root);
+    unconfigured
+        .restore(&bus)
+        .expect("removed pool cannot prevent resident resource restoration");
+    drop(unconfigured);
     let resources = restored_claims(&root, &bus, &external);
     assert_eq!(
         candidate(&next_with_resources(&bus, second_actor.clone(), &resources)),
@@ -292,4 +345,81 @@ fn one_shard_serializes_allocation_and_releases_after_claim_free() {
         Some(third),
     );
     clean(&root, bus);
+}
+
+#[test]
+fn explicit_resource_creation_and_replacement_refuse_unconfigured_pools() {
+    let (root, bus, epoch, _) = fixture("resource-declaration-validation", 0);
+    let resources = unconfigured_claims(&root);
+    let requirement = wire::EnvironmentRequirement::resource_pool(
+        "windows-guest".parse().expect("fixture resource name"),
+        1,
+    )
+    .expect("fixture shard count");
+    let mut creation = authored_add(
+        "unknown resource creation",
+        "board.test",
+        Some("todo,review"),
+        &["the fixture work is verified"],
+    );
+    creation.requirements = wire::EnvironmentRequirements::one(requirement.clone());
+    let born = stamp("RESOURCE-UNKNOWN-CREATE");
+    let command = fixture_command(
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence { task: born }],
+        &creation,
+    );
+    let created = dispatch_with_resources(
+        &bus,
+        &command,
+        None,
+        &board::NextConfig::default(),
+        None,
+        Some(&resources),
+    )
+    .expect("board command owns task creation");
+    assert_unconfigured_pool(created);
+
+    let editable = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "RESOURCE-UNKNOWN-EDIT",
+        "editable resource declaration",
+        None,
+    );
+    let visible = board(&bus, epoch, Actor::Operator);
+    let heads = at(&visible, &editable);
+    let edit = TaskEdit {
+        requirements: Some(wire::intent::TaskRequirementsEdit::one(requirement)),
+        ..super::super::edit::only(&editable)
+    };
+    let command = fixture_command(
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskEdit,
+        vec![statement_witness(heads), claim_witness(heads)],
+        &edit,
+    );
+    let replaced = dispatch_with_resources(
+        &bus,
+        &command,
+        None,
+        &board::NextConfig::default(),
+        None,
+        Some(&resources),
+    )
+    .expect("board command owns task replacement");
+    assert_unconfigured_pool(replaced);
+    clean(&root, bus);
+}
+
+fn assert_unconfigured_pool(outcome: Outcome<CommandAnswer>) {
+    let Outcome::Refusal(wire::Refusal::Bare { diagnostic }) = outcome else {
+        panic!("an explicit unknown pool must refuse: {outcome:?}");
+    };
+    assert_eq!(diagnostic.reason(), "board::resource-pool-unconfigured");
+    assert_eq!(diagnostic.observed(), Some("windows-guest"));
 }

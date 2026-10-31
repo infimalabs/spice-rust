@@ -151,18 +151,44 @@ impl BoardView {
             .find(|row| row.statement.body.born == *task)
     }
 
-    /// Whether the snapshot's environment satisfies one task's typed requirements.
+    /// Whether this task's operator-actionable environment requirements are
+    /// satisfied. Resource capacity is classified separately.
     #[must_use]
     pub fn environment_satisfies(&self, task: &BoardTask) -> bool {
         task.statement
             .body
             .requirements
+            .without_resources()
             .are_satisfied_by(&self.environment)
-            && task
-                .statement
-                .body
-                .resources
-                .are_satisfied_by(&self.environment)
+    }
+
+    /// Whether every explicitly declared resource names a configured pool.
+    #[must_use]
+    pub fn resources_configured(&self, task: &BoardTask) -> bool {
+        task.statement
+            .body
+            .resources
+            .iter()
+            .all(|(name, _)| self.resource_pool_available(name).is_some())
+    }
+
+    /// Whether the scheduler currently observes every requested resource
+    /// shard as available.
+    #[must_use]
+    pub fn resources_satisfy(&self, task: &BoardTask) -> bool {
+        task.statement
+            .body
+            .resources
+            .are_satisfied_by(&self.environment)
+    }
+
+    /// Current free shard count for one configured pool; absent means the
+    /// explicit task declaration cannot be resolved.
+    #[must_use]
+    pub fn resource_pool_available(&self, name: &wire::ResourcePoolName) -> Option<u32> {
+        self.environment
+            .resource_pools()
+            .find_map(|(configured, available)| (configured == name).then_some(available))
     }
 
     /// Whether one typed requirement is satisfied by this snapshot's exact
@@ -170,15 +196,6 @@ impl BoardView {
     #[must_use]
     pub fn requirement_satisfied(&self, requirement: &wire::EnvironmentRequirement) -> bool {
         self.environment.satisfies(requirement)
-    }
-
-    /// Currently available shards in one configured resource pool.
-    #[must_use]
-    pub fn resource_available(&self, name: &wire::ResourcePoolName) -> u32 {
-        self.environment
-            .resource_pools()
-            .find_map(|(observed, available)| (observed == name).then_some(available))
-            .unwrap_or(0)
     }
 
     /// Current authority head for one exact executable digest.

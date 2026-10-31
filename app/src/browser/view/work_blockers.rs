@@ -234,9 +234,9 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
                 .iter()
                 .filter(|requirement| requirement_blocked(board, requirement))
         });
-        let resources = wait.environment().then(|| {
-            statement.resources.iter().filter(|(name, shards)| {
-                board.is_none_or(|board| board.resource_available(name) < *shards)
+        let missing_resources = wait.environment().then(|| {
+            statement.resources.iter().filter(|(name, _)| {
+                board.is_none_or(|board| board.resource_pool_available(name).is_none())
             })
         });
         let holds = wait
@@ -265,10 +265,8 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
                 <div class="work-blocker-list">
                     {for requirements.into_iter().flatten()
                         .map(|requirement| render_requirement(statement, requirement, runtime, can_grant, grant))}
-                    {for resources.into_iter().flatten().map(|(name, shards)| {
-                        let available = board.map_or(0, |board| board.resource_available(name));
-                        render_resource_requirement(name, shards, available)
-                    })}
+                    {for missing_resources.into_iter().flatten()
+                        .map(|(name, shards)| render_resource_requirement(name, shards))}
                     if let Some(wall) = wait.wall() {
                         {render_wall(wall)}
                     }
@@ -287,7 +285,12 @@ fn requirement_blocked(
     board: Option<&crate::runtime::BoardView>,
     requirement: &wire::EnvironmentRequirement,
 ) -> bool {
-    board.is_none_or(|board| !board.requirement_satisfied(requirement))
+    match requirement {
+        wire::EnvironmentRequirement::ResourcePool { name, .. } => {
+            board.is_none_or(|board| board.resource_pool_available(name).is_none())
+        }
+        _ => board.is_none_or(|board| !board.requirement_satisfied(requirement)),
+    }
 }
 
 /// Say why a waiting task stands still and why only the operator can move it.
@@ -343,18 +346,6 @@ fn render_wall(wall: DependencyWall<'_>) -> Html {
     }
 }
 
-fn render_resource_requirement(name: &wire::ResourcePoolName, shards: u32, available: u32) -> Html {
-    html! {
-        <section class="work-blocker-card" data-blocker-kind="resource-pool">
-            <div>
-                <strong>{"Shared resource unavailable"}</strong>
-                <p>{format!("Requires {shards} shard(s) from {name}; {available} currently available.")}</p>
-            </div>
-            <span class="work-blocker-state">{"Resource required"}</span>
-        </section>
-    }
-}
-
 fn render_requirement(
     statement: &wire::intent::BoardStatement,
     requirement: &wire::EnvironmentRequirement,
@@ -385,11 +376,20 @@ fn render_requirement(
             </section>
         },
         wire::EnvironmentRequirement::ResourcePool { name, shards } => {
-            let available = runtime
-                .and_then(AppRuntime::board)
-                .map_or(0, |board| board.resource_available(name));
-            render_resource_requirement(name, shards.get(), available)
+            render_resource_requirement(name, shards.get())
         }
+    }
+}
+
+fn render_resource_requirement(name: &wire::ResourcePoolName, shards: u32) -> Html {
+    html! {
+        <section class="work-blocker-card" data-blocker-kind="resource-pool">
+            <div>
+                <strong>{"Resource pool not configured"}</strong>
+                <p>{format!("Requires {shards} shard(s) from `{name}`. Configure that named lock pool before this task can be allocated.")}</p>
+            </div>
+            <span class="work-blocker-state">{"Configuration required"}</span>
+        </section>
     }
 }
 

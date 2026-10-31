@@ -554,16 +554,24 @@ pub(in crate::board_command) fn task_show_bounded(
         lines.extend(hold.matches.iter().map(taste_match_line));
     }
     lines.extend(requirement_lines(board, statement, &environment));
-    lines.push(format!(
-        "environment {}",
-        if statement.requirements.are_satisfied_by(&environment)
-            && statement.resources.are_satisfied_by(&environment)
-        {
-            "satisfied"
-        } else {
-            "blocked"
-        }
-    ));
+    let configured_resources = statement.resources.iter().all(|(required, _)| {
+        environment
+            .resource_pools()
+            .any(|(configured, _)| configured == required)
+    });
+    let environment_state = if !statement
+        .requirements
+        .without_resources()
+        .are_satisfied_by(&environment)
+        || !configured_resources
+    {
+        "blocked"
+    } else if !statement.resources.are_satisfied_by(&environment) {
+        "waiting"
+    } else {
+        "satisfied"
+    };
+    lines.push(format!("environment {environment_state}"));
     if options.full {
         push_full_statement(&mut lines, statement);
     } else {

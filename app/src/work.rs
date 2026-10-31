@@ -467,7 +467,8 @@ pub struct WorkTask<'a> {
     availability: WorkAvailability,
     /// Full-project bucket in [`WorkProjection::projects`].
     project: usize,
-    /// An unsatisfied environment is one explicit blocker.
+    /// An unsatisfied operator-actionable environment or missing explicitly
+    /// declared resource pool is one blocker.
     environment_blocked: bool,
     /// A Design held for the operator's selection of an output it constructed,
     /// whether or not a lane still holds its claim.
@@ -819,16 +820,35 @@ impl<'a> WorkProjection<'a> {
             .enumerate()
             .map(|(index, task)| (&task.statement.body.born, index))
             .collect::<BTreeMap<_, _>>();
+        let resource_configured = board
+            .tasks
+            .iter()
+            .map(|task| board.resources_configured(task))
+            .collect::<Vec<_>>();
         let environment_blocked = board
             .tasks
             .iter()
-            .map(|task| !board.environment_satisfies(task))
+            .zip(&resource_configured)
+            .map(|(task, configured)| !board.environment_satisfies(task) || !configured)
+            .collect::<Vec<_>>();
+        let resource_waiting = board
+            .tasks
+            .iter()
+            .zip(&resource_configured)
+            .map(|(task, configured)| *configured && !board.resources_satisfy(task))
             .collect::<Vec<_>>();
         let availability = board
             .tasks
             .iter()
             .enumerate()
-            .map(|(index, task)| classify(board, task, environment_blocked[index]))
+            .map(|(index, task)| {
+                classify(
+                    board,
+                    task,
+                    environment_blocked[index],
+                    resource_waiting[index],
+                )
+            })
             .collect::<Vec<_>>();
 
         let proposal_ready = proposal_ready(board, &availability);
@@ -1145,7 +1165,12 @@ fn design_owned_indexes(board: &BoardView, dependents: &[Vec<usize>]) -> Vec<boo
 /// review and environment readiness. The resident judges closed gates over
 /// terminal evidence the open board does not carry; this surface only consumes
 /// that answer.
-fn classify(board: &BoardView, task: &BoardTask, environment_blocked: bool) -> WorkAvailability {
+fn classify(
+    board: &BoardView,
+    task: &BoardTask,
+    environment_blocked: bool,
+    resource_waiting: bool,
+) -> WorkAvailability {
     let workflow = &task.workflow.body;
     if !workflow.status.is_pending() {
         return WorkAvailability::Terminal;
@@ -1173,6 +1198,8 @@ fn classify(board: &BoardView, task: &BoardTask, environment_blocked: bool) -> W
         WorkAvailability::Review
     } else if environment_blocked {
         WorkAvailability::Held
+    } else if resource_waiting {
+        WorkAvailability::Waiting
     } else {
         WorkAvailability::Ready
     }

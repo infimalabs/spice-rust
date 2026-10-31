@@ -160,10 +160,9 @@ impl<'a> Surface<'a> {
             self.profiles.get().map(AsRef::as_ref),
             Some(&self.resources),
         ) {
-            let outcome = match self.resources.restore(self.bus) {
-                Ok(()) => outcome,
-                Err(reconciliation) => reconciliation,
-            };
+            // The board command has already committed. Reconciliation only
+            // restores advisory claim possessions and cannot replace its reply.
+            let _ = self.resources.restore(self.bus);
             return CommandDispatch::ordinary(outcome);
         }
         if let Some(dispatched) = self.dispatch_lane(seats, command) {
