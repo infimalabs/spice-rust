@@ -209,7 +209,7 @@ enum OwnerStep {
 }
 
 /// A converged plan previews as no change and so performs none, preserving an
-/// explicit `down` or `up --uninstall`. A publication that ran ensures the
+/// explicit `down` or `down --keeper`. A publication that ran ensures the
 /// owner when it succeeded, or restores the owner it quiesced when it failed.
 fn owner_step(converged: bool, lifecycle: bool, applied: bool, owned: bool) -> OwnerStep {
     if lifecycle && !converged && (applied || owned) {
@@ -259,7 +259,7 @@ fn ensure_keeper(repository: &Repository) -> Result<(), Outcome<()>> {
     let mut command = Command::new(&executable);
     command.args(["--json", "up"]);
     if !installed {
-        command.arg("--install");
+        command.arg("--keeper");
     }
     let status = command
         .current_dir(repository.worktree_root())

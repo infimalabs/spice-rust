@@ -81,7 +81,7 @@ impl Site {
     }
 }
 
-/// `spice up --install`: record the listen address and access, register the
+/// `spice up --keeper`: record the listen address and access, register the
 /// owner for the current user, and wait for the resident it starts.
 pub(crate) fn install(leaf: &clap::ArgMatches, ambient: &Ambient) -> Outcome<wire::AppOpen> {
     reply(install_result(leaf, ambient))
@@ -189,7 +189,7 @@ fn apply(
     Ok(opened)
 }
 
-/// `spice up --uninstall`: stop keeping, drain the resident, and remove the
+/// `spice down --keeper`: stop keeping, drain the resident, and remove the
 /// registration with every artifact the owner wrote.
 pub(crate) fn uninstall(ambient: &Ambient) -> Outcome<wire::KeeperRemoved> {
     reply(uninstall_result(ambient))
@@ -205,7 +205,7 @@ fn uninstall_result(ambient: &Ambient) -> CommandResult<wire::KeeperRemoved> {
                 Some("installed".to_owned()),
                 Some("absent".to_owned()),
             )
-            .with_detail("install one with `spice up --install`"),
+            .with_detail("install one with `spice up --keeper`"),
         )));
     };
     remove_owner(&site, record, ambient)
@@ -350,8 +350,8 @@ pub(crate) fn hold_stopped(repository: &Repository) -> CommandResult<()> {
         .map_err(|error| keeper_fault("resident::keeper-registration-failed", &error))
 }
 
-/// `spice up --keeper`: the task's action. Relaunch the resident until the
-/// task is disabled or deleted, appending to the owner's log.
+/// The private worker action relaunches the resident until the task is disabled
+/// or deleted, appending to the owner's log.
 pub(crate) fn keep(ambient: &Ambient) -> Outcome<()> {
     match keep_result(ambient) {
         Ok(()) => Outcome::Reply(Reply {
@@ -478,8 +478,8 @@ fn installed_refusal<B>(flag: &str, task: &str) -> Outcome<B> {
             Some(format!("--{flag}")),
         )
         .with_detail(format!(
-            "{task} fixes the listen address and access; run `spice up --install` \
-             with the new flags to change them, or `spice up --uninstall` first"
+            "{task} fixes the listen address and access; run `spice up --keeper` \
+             with the new flags, or `spice down --keeper` first"
         )),
     ))
 }

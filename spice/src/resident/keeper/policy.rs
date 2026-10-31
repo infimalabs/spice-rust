@@ -41,7 +41,7 @@ pub(crate) struct Exit {
 pub(crate) enum End {
     /// The owner's task was disabled: `spice down` asked it to stay stopped.
     Disabled,
-    /// The owner's task was deleted: `spice up --uninstall` ran.
+    /// The owner's task was deleted: `spice down --keeper` ran.
     Unregistered,
 }
 

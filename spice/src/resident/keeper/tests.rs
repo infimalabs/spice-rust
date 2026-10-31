@@ -13,6 +13,25 @@ use super::policy::{self, Attempt, End, Exit, MAX_PAUSE, RELAUNCH_PAUSE, STABLE_
 use super::record::{self, KeeperRecord};
 use super::scheduler::{Scheduler, Status};
 
+#[test]
+fn private_worker_entry_requires_its_exact_argument_vector() {
+    assert!(super::worker_selected(
+        ["spice", super::WORKER_ARGUMENT]
+            .into_iter()
+            .map(Into::into)
+    ));
+    for arguments in [
+        vec!["spice"],
+        vec!["spice", "--keeper"],
+        vec!["spice", super::WORKER_ARGUMENT, "extra"],
+    ] {
+        assert!(
+            !super::worker_selected(arguments.iter().copied().map(Into::into)),
+            "{arguments:?} must remain on the public parser path"
+        );
+    }
+}
+
 /// A scheduler that records what it was asked, in order.
 #[derive(Default)]
 struct RecordingScheduler {
@@ -316,7 +335,7 @@ fn the_task_runs_this_executable_as_the_user_at_logon_without_a_password() {
     assert!(xml.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"));
     assert!(xml.contains("<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>"));
     assert!(xml.contains(r"<Command>C:\Program Files\Spice &amp; Co\spice.exe</Command>"));
-    assert!(xml.contains("<Arguments>--json up --keeper</Arguments>"));
+    assert!(xml.contains("<Arguments>--spice-keeper-worker</Arguments>"));
     assert!(xml.contains(r"<WorkingDirectory>C:\Users\c\devel\repo</WorkingDirectory>"));
     assert!(
         !xml.contains("Password"),
