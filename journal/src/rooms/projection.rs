@@ -36,7 +36,6 @@ impl Projection {
                 self.horizons.insert(lane, (seq, body));
             }
             Change::Conversation(edit) => self.conversation.apply(edit),
-            Change::Relevance(edit) => self.relevance.apply(edit),
             Change::MaturityNotice { seq, notice } => {
                 self.notices.insert((notice.design.to_string(), seq), ());
                 self.update_maturity(&notice.design, |maturity| {

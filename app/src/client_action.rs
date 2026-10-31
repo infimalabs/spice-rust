@@ -58,7 +58,7 @@ impl RoomPostAction {
     }
 }
 
-/// One operator item disposition, reply, recovery, or relevance assessment.
+/// One operator item disposition, reply, or recovery.
 #[cfg_attr(
     all(test, not(target_arch = "wasm32")),
     expect(

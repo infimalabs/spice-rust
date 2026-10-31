@@ -92,17 +92,10 @@ impl Lanes {
                 Outcome::Reply(reply) => serde_json::to_value(&reply.body),
                 other => panic!("room inbox answered {other:?}"),
             },
-            ["room", path @ ("relevance" | "awareness")] => {
-                if *path == "relevance" {
-                    match crate::room_command::relevance::answer(&journal, leaf, contract.path) {
-                        Outcome::Reply(reply) => serde_json::to_value(&reply.body),
-                        other => panic!("room relevance answered {other:?}"),
-                    }
-                } else {
-                    match crate::room_command::awareness::answer(&journal, leaf, contract.path) {
-                        Outcome::Reply(reply) => serde_json::to_value(&reply.body),
-                        other => panic!("room awareness answered {other:?}"),
-                    }
+            ["room", "awareness"] => {
+                match crate::room_command::awareness::answer(&journal, leaf, contract.path) {
+                    Outcome::Reply(reply) => serde_json::to_value(&reply.body),
+                    other => panic!("room awareness answered {other:?}"),
                 }
             }
             other => panic!("not a room read: {other:?}"),

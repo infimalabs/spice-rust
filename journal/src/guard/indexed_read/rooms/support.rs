@@ -19,8 +19,6 @@ macro_rules! room_authority {
              UNION SELECT head_seq FROM proposal_heads \
              UNION SELECT head_seq FROM authorization_heads \
              UNION SELECT head_seq FROM room_items \
-             UNION SELECT head_seq FROM room_relevance_observations \
-             UNION SELECT head_seq FROM room_relevance_assessments \
              UNION SELECT seq FROM fact_envelopes WHERE kind IN (?1, ?2) \
              UNION SELECT min(seq) FROM fact_envelopes WHERE kind = ?3 \
              UNION SELECT h.created_seq FROM delivered d \
@@ -50,14 +48,4 @@ pub(super) fn probe_limit(budget: FactReadBudget) -> Result<i64, GuardError> {
         .expect("bounded room page probe");
     i64::try_from(limit)
         .map_err(|_| GuardError::Invalid("room read limit exceeds SQLite".to_owned()))
-}
-
-pub(super) fn indexed_length(
-    row: &rusqlite::Row<'_>,
-    column: usize,
-    class: &str,
-) -> Result<usize, GuardError> {
-    let length = row.get::<_, i64>(column).map_err(GuardError::Store)?;
-    usize::try_from(length)
-        .map_err(|_| GuardError::Invalid(format!("{class} has an invalid byte length")))
 }

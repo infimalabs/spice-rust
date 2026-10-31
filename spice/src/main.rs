@@ -412,9 +412,6 @@ impl NativeInvocation<'_> {
         match contract.path {
             ["room", "history"] => deliver_display(&room_command::run(leaf, contract), form),
             ["room", "inbox"] => deliver_display(&room_command::inbox::run(leaf, contract), form),
-            ["room", "relevance"] => {
-                deliver_display(&room_command::relevance::run(leaf, contract), form)
-            }
             ["room", "awareness"] => {
                 deliver_display(&room_command::awareness::run(leaf, contract), form)
             }
@@ -470,7 +467,6 @@ impl NativeInvocation<'_> {
             ["room", "history"]
             | ["room", "inbox"]
             | ["room", "result"]
-            | ["room", "relevance"]
             | ["room", "awareness"]
             | ["design", "show"] => {
                 self.dispatch_retained_read(contract);
@@ -543,7 +539,6 @@ impl NativeInvocation<'_> {
             | ["room", "answer"]
             | ["room", "reply"]
             | ["room", "recover"]
-            | ["room", "assess"]
             | ["room", "decline"]
             | ["room", "cancel"]
             | ["task", "list"]

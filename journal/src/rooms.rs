@@ -35,7 +35,6 @@ mod hunk;
 mod packets;
 mod preparation;
 mod projection;
-mod relevance;
 mod retained_note;
 mod sql;
 
@@ -47,7 +46,6 @@ pub(crate) use conversation::{
 pub(crate) use history::History;
 use hunk::require_hunk;
 pub(crate) use packets::require_packet_routes;
-pub(crate) use relevance::SCHEMA_SQL as RELEVANCE_SCHEMA_SQL;
 pub(crate) use retained_note::{AUDIT_PREFIX, presented};
 
 pub(crate) const MATURITY_SCHEMA_SQL: &str = r#"
@@ -204,8 +202,6 @@ pub(crate) struct Projection {
     pub(crate) horizons: BTreeMap<String, (u64, Vec<u8>)>,
     /// Conversation publications with their operator item heads.
     pub(crate) conversation: conversation::Heads,
-    /// Append-only shadow relevance observations and operator assessments.
-    pub(crate) relevance: relevance::Heads,
 }
 
 /// Authority one fold step reads and changes.
@@ -285,17 +281,6 @@ pub(crate) trait Authority {
     fn conversation(&self, publication: &str) -> Result<Option<Vec<u8>>, Refusal>;
     /// One operator item head by its key.
     fn room_item(&self, item: &str) -> Result<Option<conversation::ItemRow>, Refusal>;
-
-    /// One shadow relevance observation by stable identity.
-    fn relevance_observation(
-        &self,
-        observation: &str,
-    ) -> Result<Option<relevance::ObservationRow>, Refusal>;
-    /// One operator assessment by observation identity.
-    fn relevance_assessment(
-        &self,
-        observation: &str,
-    ) -> Result<Option<relevance::AssessmentRow>, Refusal>;
     /// Apply one projection change.
     fn change(&mut self, change: Change) -> Result<(), Refusal>;
 }
@@ -334,7 +319,6 @@ pub(crate) enum Change {
         body: Vec<u8>,
     },
     Conversation(conversation::Edit),
-    Relevance(relevance::Edit),
     MaturityNotice {
         seq: u64,
         notice: Box<wire::rooms::DesignNoticed>,
@@ -573,9 +557,6 @@ fn fold_traffic(
     actor: &Actor,
     fact: &AnyFact,
 ) -> Option<Result<(), Refusal>> {
-    if let Some(result) = relevance::fold(authority, seq, actor, fact) {
-        return Some(result);
-    }
     if let Some(result) = awareness::fold(authority, seq, actor, fact) {
         return Some(result);
     }

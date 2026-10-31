@@ -51,9 +51,9 @@ pub use publication::AppSurface;
 pub(crate) use rooms::design_next_action;
 pub use rooms::{
     CandidateWithdrawalRecord, Contribution, Conversation, ConversationProjection, Delivery,
-    DesignStanding, OperatorItem, ParticipantReason, PreparationProjection, Relevance,
-    RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent, RoomEventKind, RoomParticipant,
-    RoomPositioned, RoomProjection, RoomProjectionStatus, RoomState, StopRequest, associated,
+    DesignStanding, OperatorItem, ParticipantReason, PreparationProjection, RoomAnchorAuthority,
+    RoomAnchorSettlement, RoomEvent, RoomEventKind, RoomParticipant, RoomPositioned,
+    RoomProjection, RoomProjectionStatus, RoomState, StopRequest, associated,
     design_dependent_count,
 };
 use scoped::ScopedValue;

@@ -9,8 +9,7 @@ use wire::{
 };
 
 use super::{
-    Authority, AuthorizationRow, Change, Projection, ProposalRow, Refusal, conversation, relevance,
-    unsound,
+    Authority, AuthorizationRow, Change, Projection, ProposalRow, Refusal, conversation, unsound,
 };
 
 /// Stored authority as one commit transaction sees it, overlaid with the
@@ -331,20 +330,6 @@ impl Authority for Stored<'_> {
         conversation::stored_item(self.connection, item)
     }
 
-    fn relevance_observation(
-        &self,
-        observation: &str,
-    ) -> Result<Option<relevance::ObservationRow>, Refusal> {
-        relevance::stored_observation(self.connection, observation)
-    }
-
-    fn relevance_assessment(
-        &self,
-        observation: &str,
-    ) -> Result<Option<relevance::AssessmentRow>, Refusal> {
-        relevance::stored_assessment(self.connection, observation)
-    }
-
     fn change(&mut self, change: Change) -> Result<(), Refusal> {
         apply(self.connection, change)?;
         Ok(())
@@ -386,7 +371,6 @@ fn apply(connection: &Connection, change: Change) -> Result<(), Refusal> {
             )?;
         }
         Change::Conversation(edit) => conversation::apply_sql(connection, edit)?,
-        Change::Relevance(edit) => relevance::apply_sql(connection, edit)?,
         Change::MaturityNotice { seq, notice } => {
             connection.execute(
                 "INSERT INTO design_notices(design, seq) VALUES (?1, ?2)",
@@ -585,7 +569,6 @@ impl Projection {
             cursors: heads(connection, "SELECT lane, head_seq, body FROM room_cursors")?,
             horizons: heads(connection, "SELECT lane, head_seq, body FROM room_horizons")?,
             conversation: conversation::Heads::load(connection)?,
-            relevance: relevance::Heads::load(connection)?,
         })
     }
 }
@@ -661,8 +644,7 @@ pub(crate) fn write_projection(
             params![lane, sql(*seq), body],
         )?;
     }
-    projection.conversation.write(connection)?;
-    projection.relevance.write(connection)
+    projection.conversation.write(connection)
 }
 
 /// Execution authorization is its controller's conclusion, so each controller

@@ -162,7 +162,6 @@ holder's justification, and `task adopt` takes two task handles.
 | Activity-only attention | one day | aging drops the reason, never history or duties |
 | Route fanout per publication | 32 | the packet refuses whole |
 | Publication content | 64 KiB; 80 KiB with 1 KiB reserved per route for its ACK/NAK return | the packet refuses whole; an observation refuses `room::post-too-large` |
-| Relevance sources per retained observation | 8 | an observation never cites more |
 | Design contribution text | 4096 bytes, nonempty and stored without leading or trailing whitespace | `room::contribution-empty` or `room::contribution-too-long`; the command normalizes outer whitespace, while a noncanonical journal fact is refused |
 | Design contribution charge and question item | a charge from -2 to +2 weighing one one-based question item of the Design statement the command witnessed, or a question; 0 and ±2 cite at least one source | `room::contribution-kind-missing`, `room::contribution-charge-invalid`, `room::contribution-question-invalid`, `room::contribution-question-missing`, `room::contribution-question-unknown`, or `room::contribution-uncited`; retained contributions from before charges name no item |
 | Design contribution citation key | a task handle or stamp, a contribution publication stamp in the Design's room, a base-52 journal code, or an artifact digest | `room::contribution-cite-unknown` or `room::contribution-cite-invalid` |

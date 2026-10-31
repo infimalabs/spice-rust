@@ -1,5 +1,4 @@
-//! Why each lane is in a room and its shadow relevance observations, each
-//! derived from admitted authority alone.
+//! Why each lane is in a room, derived from admitted authority alone.
 
 use std::collections::BTreeMap;
 
@@ -7,18 +6,8 @@ use wire::rooms as authority;
 use wire::{CanonicalUuid, Disposition, Seq, TaskStamp};
 
 use super::{
-    BoardView, ParticipantReason, RoomEventKind, RoomParticipant, RoomPositioned, RoomProjection,
-    associated,
+    BoardView, ParticipantReason, RoomEventKind, RoomParticipant, RoomProjection, associated,
 };
-
-/// One shadow relevance observation and the operator's assessment of it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Relevance {
-    /// The resident's source-backed classification; never room authority.
-    pub observation: authority::RoomRelevanceObservation,
-    /// The operator's quality verdict, absent until assessed.
-    pub verdict: Option<authority::RoomRelevanceVerdict>,
-}
 
 impl RoomProjection {
     /// Current logical-lane participants and the exact reasons for their
@@ -191,48 +180,5 @@ impl RoomProjection {
         if let Some((stop, lane)) = self.stop_holder(room, board) {
             add(lane, ParticipantReason::Stop(stop.value.key.clone()));
         }
-    }
-
-    /// The room's shadow relevance observations in identity order.
-    pub fn relevance(
-        &self,
-        room: &TaskStamp,
-    ) -> impl Iterator<Item = &RoomPositioned<Relevance>> + '_ {
-        let room = room.clone();
-        self.relevance
-            .values()
-            .filter(move |relevance| relevance.value.observation.room == room)
-    }
-
-    pub(super) fn apply_observed(
-        &mut self,
-        position: Seq,
-        observation: authority::RoomRelevanceObservation,
-    ) -> bool {
-        let key = observation.observation.clone();
-        let verdict = self
-            .relevance
-            .get(&key)
-            .and_then(|relevance| relevance.value.verdict);
-        super::replace(
-            &mut self.relevance,
-            key,
-            position,
-            Relevance {
-                observation,
-                verdict,
-            },
-        )
-    }
-
-    pub(super) fn apply_assessed(
-        &mut self,
-        assessment: &authority::RoomRelevanceAssessment,
-    ) -> bool {
-        self.relevance
-            .get_mut(&assessment.observation)
-            .is_some_and(|relevance| {
-                relevance.value.verdict.replace(assessment.verdict) != Some(assessment.verdict)
-            })
     }
 }
