@@ -86,8 +86,9 @@
 /// drops. Schema 105 lets a Design request record an item admission, which an
 /// older release cannot decode. Schema 106 retires room relevance: each
 /// `room::observed` and `room::assessed` record crosses as inert
-/// `journal::retained` evidence and the relevance tables drop.
-pub const SCHEMA_VERSION: u32 = 106;
+/// `journal::retained` evidence and the relevance tables drop. Schema 107 drops
+/// the task-head project index after its only project reader retired.
+pub const SCHEMA_VERSION: u32 = 107;
 
 /// First position assigned by a newly created journal.
 ///

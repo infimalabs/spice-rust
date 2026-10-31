@@ -439,6 +439,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         return Ok(None);
     }
     cross_room_questions(&transaction, version)?;
+    retire_task_project_index(&transaction)?;
     strip_retired_members(&transaction)?;
     let taste_audits = cross_current_rows(&transaction)?;
     review_status::cross(&transaction)?;
@@ -465,6 +466,12 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         from: version,
         to: SCHEMA_VERSION,
     }))
+}
+
+fn retire_task_project_index(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
+    transaction
+        .execute_batch("DROP INDEX IF EXISTS task_heads_project_stamp;")
+        .map_err(OpenError::Sqlite)
 }
 
 /// Bind, then admit, every retained Design notice before maturity folds them:
@@ -1296,8 +1303,6 @@ CREATE TABLE task_heads (
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
     body BLOB NOT NULL
 ) STRICT;
-CREATE INDEX task_heads_project_stamp
-ON task_heads(json_extract(CAST(body AS TEXT), '$.project'), stamp);
 CREATE TABLE release_landings (
     seq INTEGER PRIMARY KEY REFERENCES fact_envelopes(seq) ON DELETE RESTRICT,
     commit_id TEXT NOT NULL,

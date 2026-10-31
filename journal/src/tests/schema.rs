@@ -19,6 +19,7 @@ mod pitch;
 mod preparation_edges;
 mod principals;
 mod probe;
+mod project_index;
 mod provenance;
 mod release_notes;
 mod retained;
