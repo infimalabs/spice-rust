@@ -205,16 +205,6 @@ type NoticedAsks = HashMap<
     Arc<HashSet<(journal::crossing::TaskStamp, Option<RoomQuestionItem>)>>,
 >;
 
-/// Each continuing session's recorded shadows by Design and statement head,
-/// keyed by lane and session.
-type DesignShadows = HashMap<
-    (
-        journal::crossing::CanonicalUuid,
-        journal::crossing::rooms::DesignSession,
-    ),
-    HashSet<(journal::crossing::TaskStamp, journal::crossing::Seq)>,
->;
-
 /// Answers derived from the whole history, advanced once per commit so no
 /// later read walks the history for them. Each index that grows with history
 /// is shared through `Arc` and copied only by the commit that changes it
@@ -240,9 +230,6 @@ struct Indexes {
     /// Each continuing session's asked Design items; `None` is a whole-Design
     /// ask.
     noticed_asks: Arc<NoticedAsks>,
-    /// Each continuing session's recorded shadows by Design and statement
-    /// head, so one shortfall is recorded once per statement revision.
-    design_shadows: Arc<DesignShadows>,
     room_publication_positions: Arc<
         HashMap<(journal::crossing::Actor, journal::crossing::TaskStamp), journal::crossing::Seq>,
     >,
@@ -394,8 +381,7 @@ impl Indexes {
             | FactKind::TrustPended => self.observe_selection(row),
             FactKind::WorkingGroupMoved
             | FactKind::WorkingGroupsArranged
-            | FactKind::DesignNoticed
-            | FactKind::DesignShadowed => self.observe_design(row),
+            | FactKind::DesignNoticed => self.observe_design(row),
             FactKind::TaskDone
             | FactKind::TaskDeleted
             | FactKind::TaskClosed
@@ -550,11 +536,6 @@ impl Indexes {
                 asked.insert((noticed.design.clone(), Some(ask.item.clone())));
             }
             Arc::make_mut(&mut self.design_notices).insert(session_key, (row.seq, noticed));
-        } else if let Some(shadowed) = row.fact.read::<journal::crossing::rooms::DesignShadowed>() {
-            Arc::make_mut(&mut self.design_shadows)
-                .entry((shadowed.lane, shadowed.session))
-                .or_default()
-                .insert((shadowed.design, shadowed.statement));
         }
     }
 
@@ -854,37 +835,6 @@ impl TaskFacts {
             .noticed_asks
             .get(&(lane, session.clone()))
             .is_some_and(|asked| asked.contains(&(design.clone(), item.cloned())))
-    }
-
-    /// Whether this continuing session was already asked about this Design at
-    /// all: about any of its items or about the whole Design.
-    #[must_use]
-    pub fn design_was_noticed_in_session(
-        &self,
-        lane: journal::crossing::CanonicalUuid,
-        session: &journal::crossing::rooms::DesignSession,
-        design: &journal::crossing::TaskStamp,
-    ) -> bool {
-        self.indexes
-            .noticed_asks
-            .get(&(lane, session.clone()))
-            .is_some_and(|asked| asked.iter().any(|(asked, _)| asked == design))
-    }
-
-    /// Whether this continuing session already recorded a shadow for this
-    /// Design at this statement head.
-    #[must_use]
-    pub fn design_was_shadowed_in_session(
-        &self,
-        lane: journal::crossing::CanonicalUuid,
-        session: &journal::crossing::rooms::DesignSession,
-        design: &journal::crossing::TaskStamp,
-        statement: journal::crossing::Seq,
-    ) -> bool {
-        self.indexes
-            .design_shadows
-            .get(&(lane, session.clone()))
-            .is_some_and(|shadowed| shadowed.contains(&(design.clone(), statement)))
     }
 
     /// Whether `lane` answered an ask about `room`'s `item` after `after`: a

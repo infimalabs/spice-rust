@@ -55,7 +55,6 @@ const PINNED: &[(&str, &str)] = &[
     ("RoomDelivered", "room::delivered"),
     ("RoomHorizon", "room::horizon"),
     ("DesignNoticed", "room::noticed"),
-    ("DesignShadowed", "room::shadowed"),
     ("DesignReturnDelivered", "room::relayed"),
     ("RoomRelevanceObserved", "room::observed"),
     ("RoomRelevanceAssessed", "room::assessed"),

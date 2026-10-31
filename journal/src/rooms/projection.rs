@@ -43,9 +43,6 @@ impl Projection {
                     maturity.observe_request(&notice);
                 })?;
             }
-            Change::Shadow { seq, design } => {
-                self.shadows.insert((design, seq), ());
-            }
             Change::MaturityContribution(contribution) => {
                 self.update_maturity(&contribution.room, |maturity| {
                     maturity.observe_contribution(&contribution);

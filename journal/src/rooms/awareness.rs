@@ -4,13 +4,13 @@
 use rusqlite::{Connection, OptionalExtension};
 use wire::rooms::{
     DESIGN_NOTICE_TERMS, DesignNoticeEvidence, DesignNoticeOpportunity, DesignNoticed,
-    DesignReturnDelivered, DesignShadowed, PreparationDecision, ProposalRef,
+    DesignReturnDelivered, PreparationDecision, ProposalRef,
 };
 use wire::{Actor, AnyFact, ClaimDisposition, ClaimHead, Seq};
 
 use super::{Authority, Refusal, require_task, subject, unsound};
 
-/// Admit one Design notice or shadow record, or `None` for another fact.
+/// Admit one Design notice record, or `None` for another fact.
 pub(super) fn fold(
     authority: &mut impl Authority,
     seq: Seq,
@@ -19,9 +19,6 @@ pub(super) fn fold(
 ) -> Option<Result<(), Refusal>> {
     if let Some(body) = fact.read::<DesignReturnDelivered>() {
         return Some(returned(authority, actor, &body));
-    }
-    if let Some(body) = fact.read::<DesignShadowed>() {
-        return Some(shadow(authority, seq, actor, &body));
     }
     fact.read::<DesignNoticed>()
         .map(|body| notice(authority, seq, actor, &body))
@@ -189,84 +186,27 @@ fn notice(
     })
 }
 
-/// A shadow is resident-owned, names an open Design at its current statement
-/// with evidence other than the Design itself, carries bounded terms, and
-/// scores strictly below the floor it records; it changes no maturity.
-fn shadow(
-    authority: &mut impl Authority,
-    seq: Seq,
-    actor: &Actor,
-    body: &DesignShadowed,
-) -> Result<(), Refusal> {
-    if *actor != Actor::Spice {
-        return unsound(format!(
-            "design shadow for {} is resident-owned, not written by {actor}",
-            body.design
-        ));
-    }
-    let referenced_tasks = [
-        match &body.opportunity {
-            DesignNoticeOpportunity::TaskCompletion { task, .. }
-            | DesignNoticeOpportunity::TaskClaim { task, .. } => Some(task),
-            DesignNoticeOpportunity::Conversation { .. }
-            | DesignNoticeOpportunity::DesignStatement
-            | DesignNoticeOpportunity::ProfileReady { .. }
-            | DesignNoticeOpportunity::SessionResumed { .. } => None,
-        },
-        match &body.evidence {
-            DesignNoticeEvidence::Task { task, .. }
-            | DesignNoticeEvidence::TaskClaim { task, .. } => Some(task),
-            DesignNoticeEvidence::Conversation { .. } => None,
-        },
-    ];
-    if referenced_tasks
-        .into_iter()
-        .flatten()
-        .any(|task| task == &body.design)
-    {
-        return unsound(format!(
-            "design shadow names {} as both the Design and its evidence",
-            body.design
-        ));
-    }
-    require_task(authority, &body.design, "shadowed design")?;
-    for task in referenced_tasks.into_iter().flatten() {
-        require_task(authority, task, "shadow evidence task")?;
-    }
-    let current = authority.task_statement(&body.design)?.ok_or_else(|| {
-        Refusal::Unsound(format!("shadowed Design {} has no statement", body.design))
-    })?;
-    if current != body.statement {
-        return unsound(format!(
-            "design shadow for {} names statement {} while its current head is {current}",
-            body.design, body.statement
-        ));
-    }
-    if body.session.identity.trim().is_empty() {
-        return unsound(format!(
-            "design shadow for {} names an empty vendor session identity",
-            body.design
-        ));
-    }
-    if body.score.get() >= body.floor.get() {
-        return unsound(format!(
-            "design shadow for {} scores {} at or above its floor {}",
-            body.design,
-            body.score.get(),
-            body.floor.get()
-        ));
-    }
-    terms(&body.design, &body.terms)?;
-    authority.change(super::Change::Shadow {
-        seq: seq.get(),
-        design: body.design.to_string(),
-    })
-}
-
 /// Refuse a notice whose matched terms are not one bounded ascending set of
 /// distinct lowercase words, or that asks about a concurred item.
 fn terms_and_ask(body: &DesignNoticed) -> Result<(), Refusal> {
-    terms(&body.design, &body.terms)?;
+    let terms_valid = !body.terms.is_empty() && body.terms.len() <= DESIGN_NOTICE_TERMS;
+    if !terms_valid {
+        return unsound(format!(
+            "design awareness for {} carries {} terms",
+            body.design,
+            body.terms.len()
+        ));
+    }
+    if body.terms.windows(2).any(|pair| pair[0] >= pair[1])
+        || body.terms.iter().any(|term| {
+            term.is_empty() || !term.chars().all(|c| c.is_alphabetic() && !c.is_uppercase())
+        })
+    {
+        return unsound(format!(
+            "design awareness for {} terms are not distinct ascending lowercase words",
+            body.design
+        ));
+    }
     if body
         .asks
         .iter()
@@ -275,28 +215,6 @@ fn terms_and_ask(body: &DesignNoticed) -> Result<(), Refusal> {
         return unsound(format!(
             "design awareness for {} asks about a concurred question item",
             body.design
-        ));
-    }
-    Ok(())
-}
-
-/// Refuse matched terms that are not one bounded ascending set of distinct
-/// lowercase words.
-fn terms(design: &wire::TaskStamp, terms: &[String]) -> Result<(), Refusal> {
-    let terms_valid = !terms.is_empty() && terms.len() <= DESIGN_NOTICE_TERMS;
-    if !terms_valid {
-        return unsound(format!(
-            "design awareness for {design} carries {} terms",
-            terms.len()
-        ));
-    }
-    if terms.windows(2).any(|pair| pair[0] >= pair[1])
-        || terms.iter().any(|term| {
-            term.is_empty() || !term.chars().all(|c| c.is_alphabetic() && !c.is_uppercase())
-        })
-    {
-        return unsound(format!(
-            "design awareness for {design} terms are not distinct ascending lowercase words"
         ));
     }
     Ok(())

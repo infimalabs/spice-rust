@@ -441,43 +441,6 @@ pub struct DesignNoticed {
     pub asks: Vec<DesignAsk>,
 }
 
-/// The best open Design one continuing session's cards selected at an
-/// opportunity fell short of its reach floor, so no request was recorded.
-///
-/// The record is positional: it names the best candidate that did not clear,
-/// under whatever floor its reach carried at the time, so a later floor change
-/// leaves every earlier shadow self-describing. It delivers nothing, wakes
-/// nothing, grants nothing, and opens no listening; it exists so the invites a
-/// floor excluded can be compared with what the lane later did.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DesignShadowed {
-    /// Open Design the session's cards scored best against.
-    pub design: TaskStamp,
-    /// Exact Design statement head evaluated.
-    pub statement: Seq,
-    /// Logical lane carrying the continuing session when evaluated.
-    pub lane: CanonicalUuid,
-    /// Occupant carrying the continuing session when evaluated.
-    pub occupant: CanonicalUuid,
-    /// Continuing vendor session whose cards were scored.
-    pub session: DesignSession,
-    /// Event that gave the resident an opportunity to evaluate the profile.
-    pub opportunity: DesignNoticeOpportunity,
-    /// Retained card whose view scored best.
-    pub evidence: DesignNoticeEvidence,
-    /// Strongest shared terms in ascending order.
-    pub terms: Vec<String>,
-    /// Reach whose floor the match fell short of.
-    pub reach: DesignReach,
-    /// That reach's floor when evaluated.
-    pub floor: DesignSimilarity,
-    /// The best cosine any card view scored, below `floor`.
-    pub score: DesignSimilarity,
-    /// Frequency fit the score was weighted under.
-    pub generation: DesignFitGeneration,
-}
-
 /// The resident handed an active Design's holder the operator's newest return
 /// decision as its next input.
 ///

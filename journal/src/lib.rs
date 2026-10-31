@@ -81,8 +81,10 @@
 /// Schema 103 gives every retained Design request one required admission: its
 /// recorded match as scored, else its reach as unscored or none as unreached,
 /// naming the last schema that wrote it, since replay cannot recover a score
-/// never kept.
-pub const SCHEMA_VERSION: u32 = 103;
+/// never kept. Schema 104 retires Design shadows: each `room::shadowed` record
+/// crosses as inert `journal::retained` evidence and the per-Design shadow index
+/// drops.
+pub const SCHEMA_VERSION: u32 = 104;
 
 /// First position assigned by a newly created journal.
 ///
