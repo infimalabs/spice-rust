@@ -26,6 +26,7 @@ mod retained_notes;
 mod review_status;
 mod room_coordination;
 mod room_questions;
+mod room_relevance;
 mod settings_receipts;
 mod task_evidence;
 mod task_markers;
@@ -68,6 +69,9 @@ const SHAPE_PREDECESSOR_SCHEMA: u32 = 55;
 /// First schema whose baseline carried the retired required-evidence index,
 /// held by every predecessor from it through schema 86.
 const TASK_EVIDENCE_SCHEMA: u32 = 48;
+/// First schema whose baseline carried room relevance observations and
+/// assessments, held by every predecessor from it through schema 105.
+const ROOM_RELEVANCE_PREDECESSOR: u32 = 49;
 
 /// Return a current fixture to a predecessor's shape and identity.
 pub(super) fn restore_predecessor(journal: &Journal, predecessor: u32) {
@@ -111,8 +115,8 @@ pub(super) fn restore_predecessor(journal: &Journal, predecessor: u32) {
     } else {
         ""
     };
-    let relevance = if predecessor < crate::migrate::ROOM_RELEVANCE_SCHEMA {
-        "DROP TABLE room_relevance_assessments; DROP TABLE room_relevance_observations;"
+    let relevance = if predecessor >= ROOM_RELEVANCE_PREDECESSOR {
+        room_relevance::PREDECESSOR_TABLES
     } else {
         ""
     };

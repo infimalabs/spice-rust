@@ -32,6 +32,7 @@ mod retained_notes;
 mod review_status;
 mod room_coordination;
 mod room_questions;
+mod room_relevance;
 mod settings_receipts;
 mod steering_rooms;
 mod task_evidence;
@@ -79,8 +80,7 @@ const PREPARED: &str = "prepared";
 /// claim-phase classification and bounded excerpt and elides the excerpt of a
 /// retained conversation notice that kept no prose, and creates the room-authority projection,
 /// room catch-up cursors and horizons, room coordination heads, room
-/// conversation heads, operator items, relevance
-/// shadow records, the working-group partition, the empty principal head
+/// conversation heads, operator items, the working-group partition, the empty principal head
 /// index, and the per-Design notice and bounded maturity projections a
 /// predecessor lacks, replacing its per-route room receipts and per-group
 /// heads. Finally it crosses every retained settings command answer from the
@@ -112,7 +112,8 @@ const PREPARED: &str = "prepared";
 /// every retained room coordination record, direction head, and coordination
 /// receipt loses its retired automated-resume rule, every retained
 /// single-ask Design invitation takes its one-element ask list, every
-/// retained Design shadow retires into inert historical authority, and every
+/// retained Design shadow, room relevance observation, and assessment retires
+/// into inert historical authority, and every
 /// retained leave answer loses its retired repeat-leave flag.
 const OLDEST_PREDECESSOR_SCHEMA: u32 = 33;
 
@@ -153,8 +154,6 @@ pub(crate) const ROOM_CONVERSATION_SCHEMA: u32 = 46;
 /// First schema whose baseline carries operator items in place of per-route
 /// room receipts.
 pub(crate) const ROOM_ITEM_SCHEMA: u32 = 47;
-/// First schema whose baseline carries room relevance shadow observations.
-pub(crate) const ROOM_RELEVANCE_SCHEMA: u32 = 49;
 /// First schema whose baseline carries the working-group partition in place
 /// of per-group heads.
 pub(crate) const GROUP_PARTITION_SCHEMA: u32 = 53;
@@ -176,7 +175,7 @@ pub(crate) const STEERING_ROOM_SCHEMA: u32 = 86;
 pub(crate) const RELEASE_NOTES_SCHEMA: u32 = 88;
 /// Each room projection beside the first schema whose baseline carries it, in
 /// creation order.
-const ROOM_SCHEMA_STEPS: [(u32, &str); 9] = [
+const ROOM_SCHEMA_STEPS: [(u32, &str); 8] = [
     (ROOM_AUTHORITY_SCHEMA, crate::rooms::SCHEMA_SQL),
     (ROOM_CURSOR_SCHEMA, crate::rooms::CURSOR_SCHEMA_SQL),
     (ROOM_HORIZON_SCHEMA, crate::rooms::HORIZON_SCHEMA_SQL),
@@ -185,7 +184,6 @@ const ROOM_SCHEMA_STEPS: [(u32, &str); 9] = [
         crate::rooms::CONVERSATION_SCHEMA_SQL,
     ),
     (ROOM_ITEM_SCHEMA, crate::rooms::CONVERSATION_ITEM_SCHEMA_SQL),
-    (ROOM_RELEVANCE_SCHEMA, crate::rooms::RELEVANCE_SCHEMA_SQL),
     (GROUP_PARTITION_SCHEMA, crate::rooms::GROUP_SCHEMA_SQL),
     (DESIGN_MATURITY_SCHEMA, crate::rooms::MATURITY_SCHEMA_SQL),
     (
@@ -418,6 +416,7 @@ fn cross_current_rows(
 fn strip_retired_members(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
     room_coordination::cross(transaction)?;
     design_shadows::cross(transaction)?;
+    room_relevance::cross(transaction)?;
     preparation_edges::strip_authorization(transaction)?;
     task_evidence::cross(transaction)?;
     contribution_charges::cross(transaction)?;

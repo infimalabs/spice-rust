@@ -1,21 +1,16 @@
 //! A room's standing inside its design menu: why each lane is involved and
-//! whether it is available, and the resident's shadow relevance observations.
-//! Every row names the admitted source it traces to. Nothing here is a roster
-//! of authority, and rendering it mounts no view and wakes no lane.
+//! whether it is available. Every row names the admitted source it traces to.
+//! Nothing here is a roster of authority, and rendering it mounts no view and
+//! wakes no lane.
 
 use wasm_bindgen::JsCast as _;
 use wire::intent::BoardTask;
-use wire::rooms::{
-    DesignCyclePresentation, DesignNoticeEvidence, DesignPassEnd, RoomProgressStanding,
-    RoomRelevanceClass, RoomRelevanceVerdict, RoomSourceView,
-};
+use wire::rooms::{DesignCyclePresentation, DesignNoticeEvidence, DesignPassEnd};
 use wire::{SequenceCode, TaskStamp};
 use yew::prelude::*;
 
 use crate::AppRuntime;
-use crate::runtime::{
-    ParticipantReason, Relevance, RoomAnchorAuthority, RoomParticipant, design_next_action,
-};
+use crate::runtime::{ParticipantReason, RoomAnchorAuthority, RoomParticipant, design_next_action};
 use crate::watchband;
 
 /// The standing section of one design's menu and of its read view; `row` is
@@ -26,7 +21,6 @@ pub(super) fn render_standing(
     row: Option<&BoardTask>,
 ) -> Html {
     let projection = runtime.room_projection();
-    let relevance = projection.relevance(room).collect::<Vec<_>>();
     let lifecycle = row.and_then(BoardTask::design_standing);
     let cycle = row.and_then(|row| {
         let cycle = *runtime.board()?.design_cycles.get(room)?;
@@ -66,11 +60,6 @@ pub(super) fn render_standing(
                     cycle.as_ref(),
                 )}
             </p>
-            if !relevance.is_empty() {
-                <ul class="room-standing-relevance" aria-label="Shadow relevance observations">
-                    {for relevance.iter().rev().map(|relevance| render_observation(&relevance.value))}
-                </ul>
-            }
         </section>
     }
 }
@@ -372,74 +361,4 @@ fn task_label(runtime: &AppRuntime, task: &TaskStamp) -> String {
             || task.to_string(),
             |entry| entry.statement.body.handle.to_string(),
         )
-}
-
-fn render_observation(relevance: &Relevance) -> Html {
-    let observation = &relevance.observation;
-    let unavailable = observation
-        .sources
-        .iter()
-        .filter(|source| matches!(source, RoomSourceView::Unavailable { .. }))
-        .count();
-    html! {
-        <li
-            key={observation.observation.to_string()}
-            class="room-standing-observation"
-            data-relevance={observation.classification.name()}
-            data-progress={observation.progress.name()}
-        >
-            <strong>{class_label(observation.classification)}</strong>
-            {format!(
-                " · {} · {}",
-                progress_label(observation.progress),
-                verdict_label(relevance.verdict)
-            )}
-            <p>{observation.explanation.clone()}</p>
-            if !observation.exceptions.is_empty() {
-                <p>{format!("Exceptions: {}", observation.exceptions)}</p>
-            }
-            if !observation.uncertainty.is_empty() {
-                <p>{format!("Uncertainty: {}", observation.uncertainty)}</p>
-            }
-            <small>
-                {format!(
-                    "{} sources, {unavailable} unavailable, through {}",
-                    observation.sources.len(),
-                    observation.through
-                )}
-            </small>
-        </li>
-    }
-}
-
-const fn class_label(class: RoomRelevanceClass) -> &'static str {
-    match class {
-        RoomRelevanceClass::RelevantContribution => "Relevant contribution",
-        RoomRelevanceClass::Declined => "Declined",
-        RoomRelevanceClass::Duplicate => "Duplicate",
-        RoomRelevanceClass::StaleActivity => "Stale activity",
-        RoomRelevanceClass::MissedOpportunity => "Missed opportunity",
-        RoomRelevanceClass::Agreement => "Agreement, not evidence",
-        RoomRelevanceClass::MessageCount => "Message count, not evidence",
-        RoomRelevanceClass::Silence => "Silence, not evidence",
-        RoomRelevanceClass::ElapsedTime => "Elapsed time, not evidence",
-        RoomRelevanceClass::Unknown => "Unclassified",
-    }
-}
-
-const fn progress_label(progress: RoomProgressStanding) -> &'static str {
-    match progress {
-        RoomProgressStanding::Advanced => "advanced a criterion",
-        RoomProgressStanding::NoProgress => "no progress",
-        RoomProgressStanding::Unknown => "progress unknown",
-    }
-}
-
-const fn verdict_label(verdict: Option<RoomRelevanceVerdict>) -> &'static str {
-    match verdict {
-        None => "unassessed",
-        Some(RoomRelevanceVerdict::Confirmed) => "operator confirmed",
-        Some(RoomRelevanceVerdict::FalsePositive) => "operator: false positive",
-        Some(RoomRelevanceVerdict::Unknown) => "operator unsure",
-    }
 }

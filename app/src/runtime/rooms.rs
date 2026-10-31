@@ -18,7 +18,6 @@ pub use contributions::Contribution;
 pub use conversation::{
     Conversation, ConversationProjection, Delivery, OperatorInboxItem, OperatorItem,
 };
-pub use standing::Relevance;
 
 /// Whether the room snapshot can be rendered as current authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -387,7 +386,6 @@ pub struct RoomProjection {
     messaged: Vec<(Seq, TaskStamp, RoomAuthorityStamp)>,
     /// Each room's latest stop request, whatever its disposition.
     stops: BTreeMap<TaskStamp, RoomPositioned<StopState>>,
-    relevance: BTreeMap<RoomAuthorityStamp, RoomPositioned<Relevance>>,
     /// Bounded maturity evidence incrementally folded per Design.
     maturity: BTreeMap<TaskStamp, authority::DesignMaturity>,
 }
@@ -407,7 +405,6 @@ impl Default for RoomProjection {
             conversation: ConversationProjection::default(),
             messaged: Vec::new(),
             stops: BTreeMap::new(),
-            relevance: BTreeMap::new(),
             maturity: BTreeMap::new(),
         }
     }
@@ -754,14 +751,6 @@ impl RoomProjection {
             FactKind::DesignNudged => Some(
                 fact.read::<authority::DesignNudged>()
                     .is_some_and(|body| self.apply_nudged(fact.seq(), body)),
-            ),
-            FactKind::RoomRelevanceObserved => Some(
-                fact.read::<authority::RoomRelevanceObserved>()
-                    .is_some_and(|body| self.apply_observed(fact.seq(), body.observation)),
-            ),
-            FactKind::RoomRelevanceAssessed => Some(
-                fact.read::<authority::RoomRelevanceAssessed>()
-                    .is_some_and(|body| self.apply_assessed(&body.assessment)),
             ),
             _ => None,
         }

@@ -208,12 +208,11 @@ const SUMMARIES: &[(&str, &str)] = &[
         "Verify a backup bundle without restoring it",
     ),
     ("retro", "Page preserved agent transcripts, newest first"),
-    ("room", "Work in task rooms: post, reply, assess, and leave"),
+    ("room", "Work in task rooms: post, reply, and leave"),
     (
         "room ack",
         "Acknowledge room delivery items as the operator",
     ),
-    ("room assess", "Assess one room relevance observation"),
     (
         "room awareness",
         "Page a Design's awareness requests and maturity",
@@ -228,7 +227,6 @@ const SUMMARIES: &[(&str, &str)] = &[
     ("room nak", "Decline room delivery items as the operator"),
     ("room post", "Publish one observation to a task's room"),
     ("room recover", "Recover one lapsed room item"),
-    ("room relevance", "Page a room's relevance observations"),
     ("room reply", "Reply to a lane's room item as the operator"),
     ("rtk", "Query an agent's RTK command history"),
     ("rtk gain", "Run the RTK gain query for one agent"),

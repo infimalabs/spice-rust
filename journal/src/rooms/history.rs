@@ -7,9 +7,7 @@ use wire::{
     Actor, AnyFact, CanonicalUuid, Instant, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead,
 };
 
-use super::{
-    Authority, Change, Projection, Refusal, claims, conversation, dependencies, fold, relevance,
-};
+use super::{Authority, Change, Projection, Refusal, claims, conversation, dependencies, fold};
 
 /// Every task, transcript generation, proposal author, and operator direction
 /// the history has introduced, beside the projection it derives.
@@ -221,30 +219,6 @@ impl Authority for History {
 
     fn room_item(&self, item: &str) -> Result<Option<conversation::ItemRow>, Refusal> {
         Ok(self.projection.conversation.items.get(item).cloned())
-    }
-
-    fn relevance_observation(
-        &self,
-        observation: &str,
-    ) -> Result<Option<relevance::ObservationRow>, Refusal> {
-        Ok(self
-            .projection
-            .relevance
-            .observations
-            .get(observation)
-            .cloned())
-    }
-
-    fn relevance_assessment(
-        &self,
-        observation: &str,
-    ) -> Result<Option<relevance::AssessmentRow>, Refusal> {
-        Ok(self
-            .projection
-            .relevance
-            .assessments
-            .get(observation)
-            .cloned())
     }
 
     fn change(&mut self, change: Change) -> Result<(), Refusal> {

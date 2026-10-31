@@ -1197,8 +1197,6 @@ fn expected_tables() -> BTreeSet<String> {
         "room_horizons",
         "room_items",
         "room_publications",
-        "room_relevance_assessments",
-        "room_relevance_observations",
         "steering_heads",
         "steering_index",
         "steering_misses",

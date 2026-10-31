@@ -19,7 +19,6 @@ mod authorization;
 mod groups;
 mod hunks;
 mod maturity;
-mod relevance;
 mod withdrawal;
 
 fn write() -> JournalWrite {

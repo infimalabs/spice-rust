@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::rooms::{
     RoomAnchor, RoomAuthorityStamp, RoomContributionKind, RoomReceiptDisposition, RoomReceiptRef,
-    RoomRelevanceVerdict, RoomSource, RoomSourceUnavailable, RoomSourceView,
+    RoomSource, RoomSourceUnavailable, RoomSourceView,
 };
 pub use crate::rooms::{
     WorkingGroupArrange, WorkingGroupDisband, WorkingGroupFast, WorkingGroupMove,
@@ -277,12 +277,6 @@ pub enum RoomControl {
     Reply { item: RoomReceiptRef, text: String },
     /// Return one lapsed operator item to pending under the same key.
     Recover { item: RoomReceiptRef },
-    /// Assess one shadow relevance observation for quality measurement.
-    Assess {
-        observation: RoomAuthorityStamp,
-        verdict: RoomRelevanceVerdict,
-        explanation: String,
-    },
 }
 
 /// What one room control moved.
@@ -297,9 +291,6 @@ pub struct RoomControlAnswer {
     /// Key of the directive a reply returned to its lane.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub returned: Option<String>,
-    /// The shadow observation an assessment settled, with its verdict.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assessed: Option<(RoomAuthorityStamp, RoomRelevanceVerdict)>,
 }
 
 /// One operator item a control moved.

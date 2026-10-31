@@ -9,16 +9,14 @@ use wire::rooms::{
 };
 
 use super::{
-    CurrentHeadWitness, FactReadBudget, GuardError, JournalHead, JournalRead, SelectedFactPage,
+    FactReadBudget, GuardError, JournalHead, JournalRead, SelectedFactPage,
     admitted_envelope_length, decode_bounded_fact, decode_head, read_metrics,
 };
 
 mod publication;
-mod relevance;
 mod support;
 
-pub use relevance::{RoomRelevanceMetrics, RoomRelevancePage, RoomRelevanceRecord};
-use support::{ROOM_AUTHORITY_PAGE, ROOM_AUTHORITY_REMAINING, indexed_length, probe_limit};
+use support::{ROOM_AUTHORITY_PAGE, ROOM_AUTHORITY_REMAINING, probe_limit};
 
 /// One write-once proposal head, decoded as its subject's family.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -60,7 +60,6 @@ spice://task/HANDLE/ledger  doc ledger HANDLE [?max-bytes=N&offset=N&digest=DIGE
 spice://task/HANDLE/artifacts  task artifact list HANDLE [?limit=N&max-bytes=N&after=ARTIFACT]
 spice://task/HANDLE/artifact/ARTIFACT  task artifact show HANDLE ARTIFACT [?offset=N&bytes=N]
 spice://task/HANDLE/room  room history HANDLE [?contributions&limit=N&max-bytes=N&after=PUBLICATION]; contributions pages only typed contributions; every page groups its contributions by kind; reading joins and acknowledges nothing
-spice://task/HANDLE/room/relevance  room relevance HANDLE [?limit=N&max-bytes=N&after=OBSERVATION]; shadow observations, assessments, and whole-room metrics; reading changes nothing
 spice://task/HANDLE/room/awareness  room awareness HANDLE [?limit=N&max-bytes=N&after=POSITION]; lanes told about this Design, matched terms, and bounded advisory maturity; reading changes nothing
 spice://task/HANDLE/design  design show HANDLE [?limit=N&max-bytes=N&after=POSITION]; reading changes nothing
 spice://room/inbox  room inbox [?limit=N&max-bytes=N&after=ITEM]; open operator items with publication text and receipt state; reading settles nothing
@@ -145,7 +144,6 @@ enum Shape {
     Artifacts { handle: TaskHandle },
     Artifact { handle: TaskHandle, id: String },
     Room { handle: TaskHandle },
-    RoomRelevance { handle: TaskHandle },
     RoomAwareness { handle: TaskHandle },
     Design { handle: TaskHandle },
     Inbox,
@@ -324,7 +322,6 @@ const SERVED: &[&[&str]] = &[
     &["task", "artifact", "show"],
     &["room", "history"],
     &["room", "inbox"],
-    &["room", "relevance"],
     &["room", "awareness"],
     &["design", "show"],
     &["board", "graph"],
@@ -350,7 +347,6 @@ impl Shape {
             Self::Task { .. } | Self::Inbox => PAGE,
             Self::Ledger { .. } => LEDGER,
             Self::Artifacts { .. }
-            | Self::RoomRelevance { .. }
             | Self::RoomAwareness { .. }
             | Self::Design { .. }
             | Self::Lanes
@@ -403,7 +399,6 @@ impl Shape {
                 format!("task/{handle}/artifact/{}", encode(id))
             }
             Self::Room { handle } => format!("task/{handle}/room"),
-            Self::RoomRelevance { handle } => format!("task/{handle}/room/relevance"),
             Self::RoomAwareness { handle } => format!("task/{handle}/room/awareness"),
             Self::Design { handle } => format!("task/{handle}/design"),
             Self::Inbox => "inbox".to_owned(),
@@ -436,7 +431,6 @@ impl Shape {
                 words(&["task", "artifact", "show", handle.as_str(), id])
             }
             Self::Room { handle } => words(&["room", "history", handle.as_str()]),
-            Self::RoomRelevance { handle } => words(&["room", "relevance", handle.as_str()]),
             Self::RoomAwareness { handle } => words(&["room", "awareness", handle.as_str()]),
             Self::Design { handle } => words(&["design", "show", handle.as_str()]),
             Self::Inbox => words(&["inbox"]),
@@ -569,12 +563,6 @@ impl Shape {
             ),
             ["room", "history", task, rest @ ..] => (
                 Self::Room {
-                    handle: handle(task)?,
-                },
-                rest,
-            ),
-            ["room", "relevance", task, rest @ ..] => (
-                Self::RoomRelevance {
                     handle: handle(task)?,
                 },
                 rest,
@@ -748,7 +736,6 @@ fn task_shape(task: &str, rest: &[&str], url: &str) -> Result<Shape, String> {
             }
         }
         ["room"] => Shape::Room { handle },
-        ["room", "relevance"] => Shape::RoomRelevance { handle },
         ["room", "awareness"] => Shape::RoomAwareness { handle },
         ["design"] => Shape::Design { handle },
         [verb] => {
@@ -1190,10 +1177,6 @@ fn room_document(
             let outcome = crate::room_command::inbox::run_at(repository, leaf, contract);
             rendered(&outcome, render::render_display(&outcome, Form::Text))
         }
-        ["room", "relevance"] => {
-            let outcome = crate::room_command::relevance::run_at(repository, leaf, contract);
-            rendered(&outcome, render::render_display(&outcome, Form::Text))
-        }
         ["room", "awareness"] => {
             let outcome = crate::room_command::awareness::run_at(repository, leaf, contract);
             rendered(&outcome, render::render_display(&outcome, Form::Text))
@@ -1328,7 +1311,6 @@ fn board_trailer(document: &mut String, shape: &Shape) {
             "acceptance",
             "artifacts",
             "room",
-            "room/relevance",
         ]
         .iter()
         .map(|child| format!("{SCHEME}task/{handle}/{child}"))

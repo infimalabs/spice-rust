@@ -84,8 +84,10 @@
 /// never kept. Schema 104 retires Design shadows: each `room::shadowed` record
 /// crosses as inert `journal::retained` evidence and the per-Design shadow index
 /// drops. Schema 105 lets a Design request record an item admission, which an
-/// older release cannot decode.
-pub const SCHEMA_VERSION: u32 = 105;
+/// older release cannot decode. Schema 106 retires room relevance: each
+/// `room::observed` and `room::assessed` record crosses as inert
+/// `journal::retained` evidence and the relevance tables drop.
+pub const SCHEMA_VERSION: u32 = 106;
 
 /// First position assigned by a newly created journal.
 ///
@@ -133,9 +135,8 @@ pub use guard::{
     JournalRead, JournalWrite, MAX_DURABLE_FACT_ENVELOPE_BYTES, MAX_RETAINED_FACT_PAGE_BYTES,
     MAX_RETAINED_FACT_PAGE_ROWS, MAX_STEERING_PAGE_ROWS, OpenRoomItemPage, OperatorDirection,
     OperatorDirections, PendingFact, ProposalAuthority, ROOM_AUTHORITY_REFUSED, ReadError,
-    RetiredSteering, RoomRelevanceMetrics, RoomRelevancePage, RoomRelevanceRecord,
-    SelectedFactPage, SteeringPage, TaskGeneration, TaskHeadPage, TaskHeads, TasteEvidenceFact,
-    TasteEvidencePage, TasteEvidenceSummary, ThreadError, TrustHeadPage,
+    RetiredSteering, SelectedFactPage, SteeringPage, TaskGeneration, TaskHeadPage, TaskHeads,
+    TasteEvidenceFact, TasteEvidencePage, TasteEvidenceSummary, ThreadError, TrustHeadPage,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use migrate::{Migration, MigrationError, OpenError};
