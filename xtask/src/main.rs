@@ -122,7 +122,7 @@ fn main() -> ExitCode {
         #[cfg(not(target_arch = "wasm32"))]
         Some(value) if value == OsStr::new("windows-guest") => {
             drop(output);
-            return run_windows_guest(arguments.collect());
+            return run_windows_guest(arguments.collect(), &ambient);
         }
         _ => {
             eprintln!("{}", help());
@@ -633,10 +633,20 @@ fn run_windows_hosted(mut arguments: Vec<OsString>) -> ExitCode {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn run_windows_guest(arguments: Vec<OsString>) -> ExitCode {
+fn run_windows_guest(arguments: Vec<OsString>, ambient: &Ambient) -> ExitCode {
     let mut stdout = io::stdout().lock();
     let mut stderr = io::stderr().lock();
-    match xtask::windows_guest(arguments, &mut stdout, &mut stderr) {
+    let lane = match ambient.get(wire::SpiceVariable::Lane.as_str()) {
+        Some(value) => match value.to_str().and_then(|value| value.parse().ok()) {
+            Some(lane) => Some(lane),
+            None => {
+                let _ = writeln!(stderr, "windows-guest: SPICE_LANE is not a canonical UUID");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
+    match xtask::windows_guest(arguments, lane, &mut stdout, &mut stderr) {
         Ok(code) => u8::try_from(code).map_or_else(|_| ExitCode::FAILURE, ExitCode::from),
         Err(error) => {
             let _ = writeln!(stderr, "{error}");

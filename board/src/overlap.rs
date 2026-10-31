@@ -164,6 +164,7 @@ mod tests {
             description: None,
             acceptance: acceptance.iter().map(|item| (*item).to_owned()).collect(),
             requirements: wire::EnvironmentRequirements::default(),
+            resources: wire::ResourceRequirements::default(),
             project: "board.kernel".to_owned(),
             filing: wire::TaskFiling::Filed,
             priority: None,

@@ -158,6 +158,11 @@ impl BoardView {
             .body
             .requirements
             .are_satisfied_by(&self.environment)
+            && task
+                .statement
+                .body
+                .resources
+                .are_satisfied_by(&self.environment)
     }
 
     /// Whether one typed requirement is satisfied by this snapshot's exact
@@ -165,6 +170,15 @@ impl BoardView {
     #[must_use]
     pub fn requirement_satisfied(&self, requirement: &wire::EnvironmentRequirement) -> bool {
         self.environment.satisfies(requirement)
+    }
+
+    /// Currently available shards in one configured resource pool.
+    #[must_use]
+    pub fn resource_available(&self, name: &wire::ResourcePoolName) -> u32 {
+        self.environment
+            .resource_pools()
+            .find_map(|(observed, available)| (observed == name).then_some(available))
+            .unwrap_or(0)
     }
 
     /// Current authority head for one exact executable digest.

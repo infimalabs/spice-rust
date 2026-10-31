@@ -142,6 +142,7 @@ fn seed_task(fixture: &Fixture, seed: &mut JournalWrite) -> PendingFact {
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
+        resources: wire::ResourceRequirements::default(),
         project: "rim.recovery".into(),
         filing: wire::TaskFiling::Filed,
         priority: None,

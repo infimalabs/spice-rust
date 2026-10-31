@@ -260,6 +260,7 @@ fn add_unclaimed_task(write: &mut JournalWrite, offset: u64) -> TaskStamp {
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
+        resources: wire::ResourceRequirements::default(),
         project: "journal".to_owned(),
         filing: wire::TaskFiling::Filed,
         priority: None,

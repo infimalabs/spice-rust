@@ -148,6 +148,7 @@ fn push_task(
         description: fixture.description,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
+        resources: wire::ResourceRequirements::default(),
         project: fixture.project,
         filing: wire::TaskFiling::Filed,
         priority: None,

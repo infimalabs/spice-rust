@@ -85,6 +85,7 @@ fn add_routed(
         description: None,
         acceptance: vec!["crosses exactly once".to_owned()],
         requirements: wire::EnvironmentRequirements::default(),
+        resources: wire::ResourceRequirements::default(),
         project: "preparation.edges".to_owned(),
         filing: wire::TaskFiling::Filed,
         priority: None,

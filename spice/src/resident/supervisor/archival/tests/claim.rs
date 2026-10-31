@@ -51,6 +51,7 @@ fn claim(fixture: &mut Fixture) -> wire::TaskStamp {
         description: None,
         acceptance: Vec::new(),
         requirements: Default::default(),
+        resources: Default::default(),
         project: "tape".to_owned(),
         filing: wire::TaskFiling::Filed,
         priority: None,

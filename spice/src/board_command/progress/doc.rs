@@ -503,6 +503,7 @@ fn add_doc_task(
                 description: spec.description,
                 acceptance: spec.acceptance,
                 requirements: wire::EnvironmentRequirements::default(),
+                resources: wire::ResourceRequirements::default(),
                 project: spec.project,
                 filing: wire::TaskFiling::Filed,
                 priority: spec.priority,

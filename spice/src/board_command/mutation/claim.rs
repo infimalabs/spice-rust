@@ -25,18 +25,36 @@ pub(in crate::board_command) fn claim_win(
     repository: Option<Host<'_>>,
     allocation: &board::NextConfig,
     profiles: OccupantProfiles<'_>,
+    resources: Option<&resources::ResourceClaims>,
 ) -> Outcome<CommandAnswer> {
-    let plan = match claim_plan(bus, command, win, repository, allocation, profiles) {
+    let plan = match claim_plan_with_resources(
+        bus, command, win, repository, allocation, profiles, resources,
+    ) {
         Ok(plan) => plan,
         Err(outcome) => return outcome,
     };
-    commit_claim(bus, command, win, plan)
+    let reservation = match resources
+        .map(|resources| resources.reserve(&plan.selected, command.actor(), &plan.snapshot.entries))
+        .transpose()
+    {
+        Ok(reservation) => reservation,
+        Err(outcome) => return outcome,
+    };
+    let outcome = commit_claim(bus, command, win, plan);
+    if matches!(outcome, Outcome::Reply(_))
+        && let Some(reservation) = reservation
+        && let Err(error) = reservation.commit()
+    {
+        return error;
+    }
+    outcome
 }
 
 /// Decide one claim against a single board read.
 ///
 /// Every refusal a caller could have avoided is raised here, in order, and the
 /// caller sees the first one only.
+#[cfg(test)]
 pub(in crate::board_command) fn claim_plan<'a>(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -44,6 +62,18 @@ pub(in crate::board_command) fn claim_plan<'a>(
     repository: Option<Host<'a>>,
     allocation: &board::NextConfig,
     profiles: OccupantProfiles<'_>,
+) -> Result<ClaimPlan<'a>, Outcome<CommandAnswer>> {
+    claim_plan_with_resources(bus, command, win, repository, allocation, profiles, None)
+}
+
+fn claim_plan_with_resources<'a>(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    win: &ClaimWin,
+    repository: Option<Host<'a>>,
+    allocation: &board::NextConfig,
+    profiles: OccupantProfiles<'_>,
+    resources: Option<&resources::ResourceClaims>,
 ) -> Result<ClaimPlan<'a>, Outcome<CommandAnswer>> {
     let possession = possession_rule(win)?;
     // A named claim decides against its exact witnessed task even when that
@@ -57,7 +87,19 @@ pub(in crate::board_command) fn claim_plan<'a>(
         })
         .collect::<Vec<_>>();
     let snapshot = validated_working_snapshot_for_tasks(bus, command.actor().clone(), &roots)?;
-    let selected = claim_selection(&snapshot, command, possession, allocation, profiles)?.clone();
+    let mut environment = snapshot.answer.environment();
+    if let Some(resources) = resources {
+        environment = resources.observe(environment, &snapshot.entries)?;
+    }
+    let selected = claim_selection(
+        &snapshot,
+        command,
+        possession,
+        allocation,
+        profiles,
+        &environment,
+    )?
+    .clone();
     // Named capture may possess a planning deliverable, but a recovery-bound
     // capture adopts implementation, so it refuses planning before Git work.
     if matches!(possession, Possession::Recover | Possession::RecoverSteal) {
@@ -656,11 +698,12 @@ fn claim_selection<'a>(
     possession: Possession,
     allocation: &board::NextConfig,
     profiles: OccupantProfiles<'_>,
+    environment: &wire::Environment,
 ) -> Result<&'a Entry, Outcome<CommandAnswer>> {
     if possession.named() {
-        named_claim_selection(snapshot, command, possession)
+        named_claim_selection(snapshot, command, possession, environment)
     } else {
-        allocator_claim_selection(snapshot, command, allocation, profiles)
+        allocator_claim_selection(snapshot, command, allocation, profiles, environment)
     }
 }
 
@@ -672,10 +715,10 @@ fn allocator_claim_selection<'a>(
     command: &wire::AdmittedCommand,
     allocation: &board::NextConfig,
     profiles: OccupantProfiles<'_>,
+    environment: &wire::Environment,
 ) -> Result<&'a Entry, Outcome<CommandAnswer>> {
     let residency = &snapshot.answer.residency.body;
     let subscription = allocation_subscription(residency, command.actor())?;
-    let environment = snapshot.answer.environment();
     let now = current_instant()?;
     let matcher = OccupantMatch::open(profiles, residency, command.actor(), &snapshot.entries)?;
     let match_score = |entry: &Entry| matcher.as_ref().map_or(0.0, |matcher| matcher.score(entry));
@@ -684,7 +727,7 @@ fn allocator_claim_selection<'a>(
         board::Claimant {
             actor: command.actor(),
             subscription: &subscription,
-            environment: &environment,
+            environment,
             match_score: matcher
                 .as_ref()
                 .map(|_| &match_score as &dyn Fn(&Entry) -> f64),
@@ -731,6 +774,7 @@ fn named_claim_selection<'a>(
     snapshot: &'a ValidatedSnapshot,
     command: &wire::AdmittedCommand,
     possession: Possession,
+    environment: &wire::Environment,
 ) -> Result<&'a Entry, Outcome<CommandAnswer>> {
     let task = command
         .expected()
@@ -766,16 +810,15 @@ fn named_claim_selection<'a>(
             ),
         ));
     }
-    let environment = snapshot.answer.environment();
     let satisfied = board::resolved_tasks(&snapshot.entries);
     refuse_held_design(entry, &satisfied)?;
     let (admitted, stealing) = match possession {
         Possession::Steal | Possession::RecoverSteal => (
-            board::stealable_entry(&satisfied, entry, command.actor(), &environment),
+            board::stealable_entry(&satisfied, entry, command.actor(), environment),
             true,
         ),
         Possession::Recover | Possession::Capture => (
-            board::capturable_entry(&satisfied, entry, command.actor(), &environment),
+            board::capturable_entry(&satisfied, entry, command.actor(), environment),
             false,
         ),
         Possession::Next => unreachable!("allocator possession returned above"),

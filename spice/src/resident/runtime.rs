@@ -44,6 +44,7 @@ pub(super) struct SurfaceConfig {
     pub(super) consent: consent::Policy,
     pub(super) allocation: board::NextConfig,
     pub(super) lane: lane::Config,
+    pub(super) lock: sill::LockConfig,
     omp_binary: String,
     /// The process environment `main` captured, for every child and Git
     /// operation this resident runs.
@@ -122,6 +123,7 @@ fn startup_surface_from_loaded(loaded: &spice::config::Loaded, ambient: Ambient)
             consent: loaded.resolved().root().consent().policy().clone(),
             allocation: *loaded.resolved().root().board().next(),
             lane: loaded.resolved().root().lane().clone(),
+            lock: loaded.resolved().root().lock().clone(),
             omp_binary: loaded
                 .resolved()
                 .root()

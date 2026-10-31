@@ -70,11 +70,16 @@ impl From<String> for WindowsGuestError {
 /// pin, host tool, guest, or transport step.
 pub fn windows_guest(
     arguments: Vec<OsString>,
+    lane: Option<wire::CanonicalUuid>,
     output: &mut impl Write,
     error_output: &mut impl Write,
 ) -> Result<i32, WindowsGuestError> {
     let action = Action::parse(arguments)?;
     let context = Context::discover()?;
+    let _resource = action
+        .requires_resource()
+        .then(|| context.acquire_resource(lane.as_ref()))
+        .transpose()?;
     match action {
         Action::Provision { replace } => provision(&context, replace, output)?,
         Action::Start => start(&context, output)?,
@@ -154,6 +159,13 @@ impl Action {
             other => Err(usage(&format!("unknown guest command {other:?}"))),
         }
     }
+
+    fn requires_resource(&self) -> bool {
+        matches!(
+            self,
+            Self::Start | Self::Stop | Self::Reset | Self::Sync(_) | Self::Run(_)
+        )
+    }
 }
 
 struct Context {
@@ -161,6 +173,7 @@ struct Context {
     paths: Paths,
     declaration: Declaration,
     identity: String,
+    resources: sill::LockTopology,
 }
 
 impl Context {
@@ -169,6 +182,8 @@ impl Context {
             .map_err(|error| format!("current directory is unavailable: {error}"))?;
         let repository = spice::repository::Repository::discover(&working)
             .map_err(|error| format!("repository is unavailable: {error}"))?;
+        let loaded = spice::config::capture_repository(&repository, &[])
+            .map_err(|error| format!("repository configuration is unavailable: {error}"))?;
         let root = repository.worktree_root().to_path_buf();
         let paths = Paths::new(
             repository
@@ -177,13 +192,67 @@ impl Context {
                 .join("windows-guest"),
         );
         let (declaration, identity) = Declaration::load(&root)?;
+        let resources = sill::LockTopology::new(&root, loaded.resolved().root().lock());
         Ok(Self {
             root,
             paths,
             declaration,
             identity,
+            resources,
         })
     }
+
+    fn acquire_resource(
+        &self,
+        lane: Option<&wire::CanonicalUuid>,
+    ) -> Result<GuestResource, WindowsGuestError> {
+        match self
+            .resources
+            .try_acquire("windows-guest", None)
+            .map_err(|error| format!("cannot acquire windows-guest resource: {error}"))?
+        {
+            sill::LockAttempt::Acquired(shard) => Ok(GuestResource::Held { _shard: shard }),
+            sill::LockAttempt::Contended { .. } if self.claim_owned_by(lane)? => {
+                Ok(GuestResource::Borrowed)
+            }
+            sill::LockAttempt::Contended { .. } => Err(
+                "the windows-guest resource is held by another claim or process"
+                    .to_owned()
+                    .into(),
+            ),
+        }
+    }
+
+    fn claim_owned_by(
+        &self,
+        lane: Option<&wire::CanonicalUuid>,
+    ) -> Result<bool, WindowsGuestError> {
+        let Some(lane) = lane else {
+            return Ok(false);
+        };
+        let report = self
+            .resources
+            .report()
+            .map_err(|error| format!("cannot inspect windows-guest resource: {error}"))?;
+        Ok(report
+            .pools
+            .iter()
+            .find(|pool| pool.name == "windows-guest")
+            .into_iter()
+            .flat_map(|pool| &pool.entries)
+            .filter_map(|entry| entry.owner.as_ref())
+            .filter_map(|owner| owner.context.as_deref())
+            .any(|context| claim_context_owned_by(context, lane)))
+    }
+}
+
+fn claim_context_owned_by(context: &str, lane: &wire::CanonicalUuid) -> bool {
+    serde_json::from_str::<wire::ResourceClaimOwner>(context).is_ok_and(|owner| owner.lane == *lane)
+}
+
+enum GuestResource {
+    Held { _shard: sill::HeldShard },
+    Borrowed,
 }
 
 fn provision(
@@ -395,4 +464,27 @@ fn sha256_file(path: &Path) -> Result<String, String> {
         hasher.update(&buffer[..read]);
     }
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_lane_named_by_claim_owner_context_may_borrow() {
+        let lane: wire::CanonicalUuid = "00000000-0000-0000-0000-000000000001"
+            .parse()
+            .expect("fixture lane");
+        let other: wire::CanonicalUuid = "00000000-0000-0000-0000-000000000002"
+            .parse()
+            .expect("fixture lane");
+        let context = serde_json::to_string(&wire::ResourceClaimOwner {
+            lane,
+            task: wire::TaskStamp::for_micros(1).expect("fixture task stamp"),
+        })
+        .expect("owner context encodes");
+        assert!(claim_context_owned_by(&context, &lane));
+        assert!(!claim_context_owned_by(&context, &other));
+        assert!(!claim_context_owned_by("not-json", &lane));
+    }
 }

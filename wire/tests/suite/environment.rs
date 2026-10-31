@@ -205,6 +205,83 @@ fn appliance_version_is_satisfied_only_by_a_strictly_later_running_appliance() {
 }
 
 #[test]
+fn resource_pool_requires_its_declared_available_shard_count() {
+    let name = "windows-guest"
+        .parse::<wire::ResourcePoolName>()
+        .expect("normal pool name");
+    let requirement =
+        EnvironmentRequirement::resource_pool(name.clone(), 2).expect("positive shard count");
+    let encoded: Value = serde_json::from_slice(&wire::encode(&requirement).expect("encodes"))
+        .expect("requirement is JSON");
+    assert_eq!(
+        encoded,
+        json!({"fact": "resource-pool", "name": "windows-guest", "shards": 2})
+    );
+    let requirements = EnvironmentRequirements::one(requirement);
+    assert!(!requirements.are_satisfied_by(&Environment::EMPTY));
+    assert!(
+        !requirements.are_satisfied_by(&Environment::EMPTY.with_resource_pool(name.clone(), 1))
+    );
+    assert!(requirements.are_satisfied_by(&Environment::EMPTY.with_resource_pool(name, 2)));
+    assert!(
+        EnvironmentRequirement::resource_pool(
+            "windows-guest".parse().expect("normal pool name"),
+            0,
+        )
+        .is_err()
+    );
+    for malformed in [
+        br#"{"fact":"resource-pool","name":"../guest","shards":1}"#.as_slice(),
+        br#"{"fact":"resource-pool","name":"windows-guest","shards":0}"#,
+    ] {
+        assert!(wire::decode::<EnvironmentRequirement>(malformed).is_err());
+    }
+}
+
+#[test]
+fn repeated_resource_entries_compile_into_one_sorted_task_map() {
+    let emulator = "emulator"
+        .parse::<wire::ResourcePoolName>()
+        .expect("resource name");
+    let windows = "windows-guest"
+        .parse::<wire::ResourcePoolName>()
+        .expect("resource name");
+    let authored = EnvironmentRequirements::new(vec![
+        EnvironmentRequirement::resource_pool(emulator.clone(), 2).expect("positive count"),
+        EnvironmentRequirement::resource_pool(windows.clone(), 1).expect("positive count"),
+    ])
+    .expect("resource entries are in pool-name order");
+    let resources = authored.compiled_resources();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&wire::encode(&resources).expect("map encodes"))
+            .expect("map is JSON"),
+        json!({"emulator": 2, "windows-guest": 1})
+    );
+    assert!(authored.without_resources().is_empty());
+    assert!(!resources.are_satisfied_by(&Environment::EMPTY.with_resource_pool(emulator, 2)));
+    assert!(
+        resources.are_satisfied_by(
+            &Environment::EMPTY
+                .with_resource_pool("emulator".parse().expect("resource name"), 2,)
+                .with_resource_pool(windows, 1)
+        )
+    );
+    assert!(
+        EnvironmentRequirements::new(vec![
+            EnvironmentRequirement::resource_pool(
+                "windows-guest".parse().expect("resource name"),
+                1,
+            )
+            .expect("positive count"),
+            EnvironmentRequirement::resource_pool("emulator".parse().expect("resource name"), 2,)
+                .expect("positive count"),
+        ])
+        .is_err(),
+        "authored resource entries must already be in canonical name order"
+    );
+}
+
+#[test]
 fn authored_evaluators_and_non_values_have_no_wire_shape() {
     for malformed in [
         br#"{"fact":"journal-schema","value":0}"#.as_slice(),

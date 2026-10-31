@@ -73,6 +73,7 @@ pub(super) fn seed_timer_task(
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
+        resources: wire::ResourceRequirements::default(),
         project: statement_project,
         filing: statement_filing,
         priority: None,

@@ -62,6 +62,13 @@ fn prepare_mutation_claim<'a>(
     if !requested {
         return Ok(None);
     }
+    if !selected.statement().resources.is_empty() {
+        return Err(refusal(
+            "task::resource-claim-must-allocate",
+            Some(selected.handle().to_string()),
+            "perform the mutation without --claim, then run task next so allocation reserves its resource",
+        ));
+    }
     let room_context = claim_room(bus, repository, selected)?;
     let prepared = prepare_capture_claim(bus, command, repository, snapshot, selected, false)?;
     let origin_context = task_steering_origin_output(bus, &snapshot.facts, selected)?;
@@ -210,6 +217,13 @@ fn create_task(
         Ok(admitted) => admitted,
         Err(outcome) => return outcome,
     };
+    if add.claim && add.requirements.resource_pools().next().is_some() {
+        return refusal(
+            "task::resource-claim-must-allocate",
+            Some("atomic creation cannot reserve a configured resource pool".to_owned()),
+            "create the task without --claim, then run task next so allocation reserves its resource",
+        );
+    }
     let filing = if add.draft {
         wire::TaskFiling::Draft
     } else {
@@ -618,7 +632,8 @@ fn prepare_task_for(
         pitch: add.pitch.trim().to_owned(),
         description: add.description.clone(),
         acceptance: add.acceptance.clone(),
-        requirements: add.requirements.clone(),
+        requirements: add.requirements.without_resources(),
+        resources: add.requirements.compiled_resources(),
         project: project_text.clone(),
         filing,
         priority: None,

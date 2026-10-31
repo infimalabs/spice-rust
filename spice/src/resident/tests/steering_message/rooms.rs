@@ -91,6 +91,7 @@ impl Lanes {
             description,
             acceptance,
             requirements: wire::EnvironmentRequirements::default(),
+            resources: wire::ResourceRequirements::default(),
             project: "serve.rooms".to_owned(),
             filing: wire::TaskFiling::Filed,
             priority: None,

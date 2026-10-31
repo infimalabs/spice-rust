@@ -714,6 +714,11 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
                     "the row re-encodes unchanged".to_owned(),
                 ],
                 requirements: wire::EnvironmentRequirements::default(),
+                resources: wire::ResourceRequirements::new([(
+                    "windows-guest".parse().expect("resource name"),
+                    1,
+                )])
+                .expect("resource declaration"),
                 project: "wire.binding".to_owned(),
                 filing: wire::TaskFiling::Filed,
                 priority: Some(wire::TaskPriority::High),

@@ -28,6 +28,7 @@ pub(crate) fn task(value: i64, project: &str) -> BoardTask {
                 description: None,
                 acceptance: Vec::new(),
                 requirements: wire::EnvironmentRequirements::EMPTY,
+                resources: wire::ResourceRequirements::EMPTY,
                 project: project.to_owned(),
                 filing: wire::TaskFiling::Filed,
                 priority: None,

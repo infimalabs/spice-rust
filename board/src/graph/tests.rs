@@ -33,6 +33,7 @@ fn entry(task: TaskStamp, assignment: Option<Actor>) -> Entry {
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
+        resources: wire::ResourceRequirements::default(),
         project: "board.graph".to_owned(),
         filing: wire::TaskFiling::Filed,
         priority: None,

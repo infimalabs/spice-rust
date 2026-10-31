@@ -44,6 +44,7 @@ pub(super) fn prepare(
     command: &wire::AdmittedCommand,
     edit: &TaskEdit,
     requirements: &wire::EnvironmentRequirements,
+    resources: &wire::ResourceRequirements,
     environment: &wire::Environment,
     at: Instant,
 ) -> Result<Change, Outcome<CommandAnswer>> {
@@ -55,6 +56,17 @@ pub(super) fn prepare(
             lease: None,
         });
     };
+    if resources != &entry.statement().resources
+        && entry
+            .claim()
+            .is_some_and(|claim| claim.disposition == ClaimDisposition::Active)
+    {
+        return Err(refusal(
+            "task::resource-edit-claimed",
+            Some(entry.handle().to_string()),
+            "release the active claim before replacing its resource map",
+        ));
+    }
     let trust_blocked = requirements.has_unsatisfied_trust_grant(environment);
     let lease = lease_transition(entry, command, trust_blocked, at)?;
     Ok(Change {

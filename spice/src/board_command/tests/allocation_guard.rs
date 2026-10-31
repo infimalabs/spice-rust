@@ -1,5 +1,6 @@
 use super::*;
 
+mod resource;
 mod trust;
 
 /// The task the allocator would hand this actor from one snapshot.

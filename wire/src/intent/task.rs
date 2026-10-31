@@ -145,7 +145,7 @@ pub struct TaskEdit {
     /// Replacement criteria, when they move.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub acceptance: Vec<String>,
-    /// Dedicated replacement or clearing of environmental requirements.
+    /// Dedicated replacement or clearing of environmental and resource requirements.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -182,21 +182,21 @@ pub struct TaskEdit {
     pub flow: Option<String>,
 }
 
-/// One explicit environmental-requirement mutation.
+/// One explicit task-requirement mutation.
 ///
 /// The dedicated action keeps omission as "unchanged", a nonempty canonical
-/// collection as "replace", and clearing as its own spelling. No empty array
-/// can be normalized into either intent.
+/// collection as "replace", and clearing as its own spelling. Resource entries
+/// compile into the statement's canonical resource map during publication.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "lowercase", deny_unknown_fields)]
 pub enum TaskRequirementsEdit {
-    /// Replace the complete AND-composed collection.
+    /// Replace the complete AND-composed requirement collection.
     Set {
         /// Nonempty canonical requirements in environmental-fact order.
         #[serde(deserialize_with = "crate::EnvironmentRequirements::present")]
         requirements: crate::EnvironmentRequirements,
     },
-    /// Remove every environmental requirement.
+    /// Remove every environmental and resource requirement.
     Clear {},
 }
 

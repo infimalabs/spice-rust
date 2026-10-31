@@ -1278,12 +1278,24 @@ fn dispatch_working_group(
 
 /// Dispatch with the resident repository required by production Git boundaries
 /// and the retained session profiles `task next` and claims rank work by.
+#[cfg(test)]
 pub(crate) fn dispatch_with_repository(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     repository: Option<Host<'_>>,
     allocation: &board::NextConfig,
     profiles: OccupantProfiles<'_>,
+) -> Option<Outcome<CommandAnswer>> {
+    dispatch_with_resources(bus, command, repository, allocation, profiles, None)
+}
+
+pub(crate) fn dispatch_with_resources(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    repository: Option<Host<'_>>,
+    allocation: &board::NextConfig,
+    profiles: OccupantProfiles<'_>,
+    resources: Option<&resources::ResourceClaims>,
 ) -> Option<Outcome<CommandAnswer>> {
     if let Some(outcome) = super::dispatch_preparation(bus, command, repository) {
         return Some(outcome);
@@ -1298,7 +1310,7 @@ pub(crate) fn dispatch_with_repository(
     let outcome = match command.body() {
         wire::intent::Intent::ReportRead(read) => read_report(bus, read, command),
         wire::intent::Intent::BoardRead(read) => {
-            read_board(bus, read, command, allocation, profiles)
+            read_board(bus, read, command, allocation, profiles, resources)
         }
         wire::intent::Intent::TaskDetail(detail) => {
             read_task_detail(bus, repository, detail, command.actor().clone())
@@ -1330,9 +1342,9 @@ pub(crate) fn dispatch_with_repository(
             claim_free(bus, command, task, repository)
         }
         wire::intent::Intent::TaskDepends(depends) => task_depends(bus, command, depends),
-        wire::intent::Intent::ClaimWin(win) => {
-            claim_win(bus, command, win, repository, allocation, profiles)
-        }
+        wire::intent::Intent::ClaimWin(win) => claim_win(
+            bus, command, win, repository, allocation, profiles, resources,
+        ),
         wire::intent::Intent::TaskDone(done) => task_done(bus, command, done, repository),
         wire::intent::Intent::TaskReview(review) => task_review(bus, command, review, repository),
         wire::intent::Intent::DocApply(apply) => doc_apply(bus, command, apply, repository),

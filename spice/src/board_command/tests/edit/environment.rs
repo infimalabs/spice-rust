@@ -87,6 +87,101 @@ fn appliance_requirement_holds_a_task_until_a_later_appliance_runs() {
     );
 }
 
+#[test]
+fn unclaimed_resource_map_replaces_and_clears_while_active_claim_refuses_change() {
+    let (_root, bus, epoch, seats) = fixture("task-resource-map-edit", 1);
+    let actor = Actor::Lane(seats[0].lane);
+    let editable = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "RESOURCE-1kKfYW07",
+        "Resize resource ownership",
+        Some("todo"),
+    );
+    let before = board(&bus, epoch, actor.clone());
+    let before_heads = at(&before, &editable);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskEdit,
+        vec![statement_witness(before_heads), claim_witness(before_heads)],
+        &resource_edit(&editable, 2),
+    ));
+    let replaced = board(&bus, epoch, actor.clone());
+    let replaced_heads = at(&replaced, &editable);
+    assert!(replaced_heads.statement.body.requirements.is_empty());
+    assert_eq!(
+        replaced_heads
+            .statement
+            .body
+            .resources
+            .iter()
+            .map(|(name, shards)| (name.as_str(), shards))
+            .collect::<Vec<_>>(),
+        [("windows-guest", 2)]
+    );
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskEdit,
+        vec![
+            statement_witness(replaced_heads),
+            claim_witness(replaced_heads),
+        ],
+        &TaskEdit {
+            requirements: Some(wire::intent::TaskRequirementsEdit::Clear {}),
+            ..only(&editable)
+        },
+    ));
+    assert!(
+        at(&board(&bus, epoch, actor.clone()), &editable)
+            .statement
+            .body
+            .resources
+            .is_empty()
+    );
+
+    let claimed = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "RESOURCE-1kKfYW08",
+        "Keep claimed resource ownership",
+        Some("todo"),
+    );
+    capture_for(&bus, epoch, &seats[0], &claimed);
+    let held = board(&bus, epoch, actor);
+    let held_heads = at(&held, &claimed);
+    let outcome = issue(
+        &bus,
+        epoch,
+        held.principal.clone(),
+        CommandKind::TaskEdit,
+        vec![statement_witness(held_heads), claim_witness(held_heads)],
+        &resource_edit(&claimed, 1),
+    );
+    assert!(
+        matches!(&outcome, Outcome::Refusal(refusal) if refusal.reason() == "task::resource-edit-claimed"),
+        "{outcome:?}"
+    );
+}
+
+fn resource_edit(task: &TaskHandle, shards: u32) -> TaskEdit {
+    TaskEdit {
+        requirements: Some(wire::intent::TaskRequirementsEdit::one(
+            wire::EnvironmentRequirement::resource_pool(
+                "windows-guest".parse().expect("resource name"),
+                shards,
+            )
+            .expect("positive shard count"),
+        )),
+        ..only(task)
+    }
+}
+
 fn ice_active_holder(
     bus: &Bus,
     epoch: CanonicalUuid,

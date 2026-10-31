@@ -293,6 +293,9 @@ pub struct BoardStatement {
         deserialize_with = "crate::EnvironmentRequirements::present"
     )]
     pub requirements: crate::EnvironmentRequirements,
+    /// Canonical resource-pool shard counts required before allocation.
+    #[serde(default, skip_serializing_if = "crate::ResourceRequirements::is_empty")]
+    pub resources: crate::ResourceRequirements,
     /// Scheduler project grouping.
     pub project: String,
     /// Filing standing, independent of project identity and visibility.
@@ -357,6 +360,7 @@ impl From<&crate::TaskHead> for BoardStatement {
             description: statement.description.clone(),
             acceptance: statement.acceptance.clone(),
             requirements: statement.requirements.clone(),
+            resources: statement.resources.clone(),
             project: statement.project.clone(),
             filing: statement.filing,
             priority: statement.priority,
@@ -400,6 +404,7 @@ impl BoardStatement {
             description: self.description.clone(),
             acceptance: self.acceptance.clone(),
             requirements: self.requirements.clone(),
+            resources: self.resources.clone(),
             project: self.project.clone(),
             filing: self.filing,
             priority: self.priority,
@@ -814,6 +819,9 @@ pub struct BoardAnswer {
     /// Current executable-configuration trust heads in ascending digest order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trust: Vec<Positioned<crate::TrustHead>>,
+    /// Available shard count observed for each declared resource pool.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub resource_pools: std::collections::BTreeMap<crate::ResourcePoolName, u32>,
     /// Product version of the resident appliance that captured this snapshot.
     pub appliance: crate::manifest::ProductVersion,
     /// Current resident and lane head used by possession witnesses.
@@ -838,10 +846,14 @@ impl BoardAnswer {
     /// Compile the environmental observations carried by this snapshot.
     #[must_use]
     pub fn environment(&self) -> crate::Environment {
-        crate::Environment::journal_schema(self.schema)
+        let mut environment = crate::Environment::journal_schema(self.schema)
             .expect("an admitted board schema is positive")
             .with_trust_heads(self.trust.iter().map(|head| head.body.clone()))
-            .with_appliance(self.appliance.clone())
+            .with_appliance(self.appliance.clone());
+        for (name, available) in &self.resource_pools {
+            environment = environment.with_resource_pool(name.clone(), *available);
+        }
+        environment
     }
 }
 

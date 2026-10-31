@@ -1168,6 +1168,7 @@ fn attach_heads(
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
+        resources: wire::ResourceRequirements::default(),
         project: "timer.claim".to_owned(),
         filing: wire::TaskFiling::Filed,
         priority: None,

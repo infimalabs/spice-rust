@@ -86,6 +86,8 @@ pub struct LockShardReport {
 pub struct LockOwnerReport {
     pub pid: u32,
     pub cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
 }
 
 /// Whether a nonblocking acquisition would have succeeded when observed.
@@ -656,16 +658,18 @@ pub enum LockAttempt {
 pub struct HeldShard {
     shard: u32,
     possession: Possession,
+    context: Option<String>,
     #[cfg(unix)]
     protected: Option<(u32, u32)>,
 }
 
 impl HeldShard {
     fn new(shard: u32, possession: Possession) -> io::Result<Self> {
-        write_owner(possession.file(), None, false)?;
+        write_owner(possession.file(), None, false, None)?;
         Ok(Self {
             shard,
             possession,
+            context: None,
             #[cfg(unix)]
             protected: None,
         })
@@ -681,6 +685,17 @@ impl HeldShard {
         &self.possession
     }
 
+    /// Attach bounded caller context to this shard's public owner evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error when the owner record cannot be replaced.
+    pub fn set_context(&mut self, context: Option<String>) -> io::Result<()> {
+        write_owner(self.possession.file(), None, false, context.as_deref())?;
+        self.context = context;
+        Ok(())
+    }
+
     /// Spawn a child whose process group retains possession if this process dies.
     ///
     /// An independent guardian holds the descriptor until every member of the
@@ -694,8 +709,14 @@ impl HeldShard {
     #[cfg(unix)]
     pub fn spawn_protected(&mut self, spec: Spec) -> io::Result<Running> {
         let file = self.possession.file();
+        let context = self.context.as_deref();
         let running = crate::spawn::spawn_guarded(spec, file, &mut |guardian| {
-            write_owner(file, Some((ProtectedGroup::Blank, guardian)), false)
+            write_owner(
+                file,
+                Some((ProtectedGroup::Blank, guardian)),
+                false,
+                context,
+            )
         })?;
         let guardian = running
             .guardian_id()
@@ -723,7 +744,12 @@ impl Drop for HeldShard {
             && !process_absent(guardian)
         {
             let published = Some((ProtectedGroup::Published(group), guardian));
-            let _ = write_owner(self.possession.file(), published, true);
+            let _ = write_owner(
+                self.possession.file(),
+                published,
+                true,
+                self.context.as_deref(),
+            );
             return;
         }
         let _ = clear_owner(self.possession.file());

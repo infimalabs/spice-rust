@@ -126,6 +126,7 @@ pub(crate) use automatic_lifecycle::{
     AutomaticClaim, AutomaticSeat, claim_automatic, is_automatic_claim, release_automatic,
 };
 mod mutation;
+pub(crate) mod resources;
 pub(crate) use mutation::task_defer;
 use mutation::*;
 mod planning;

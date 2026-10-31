@@ -421,6 +421,9 @@ pub struct TaskHead {
         deserialize_with = "crate::EnvironmentRequirements::present"
     )]
     pub requirements: crate::EnvironmentRequirements,
+    /// Canonical resource-pool shard counts required before allocation.
+    #[serde(default, skip_serializing_if = "crate::ResourceRequirements::is_empty")]
+    pub resources: crate::ResourceRequirements,
     /// Scheduler project grouping.
     pub project: String,
     /// Filing standing, independent of project identity and visibility.

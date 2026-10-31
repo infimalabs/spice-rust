@@ -8,9 +8,126 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::num::NonZeroU32;
+use std::str::FromStr;
 
 use serde::de::{Deserializer, Error as _};
 use serde::{Deserialize, Serialize};
+
+/// One configured lock-pool name, spelled as one normal path component.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct ResourcePoolName(String);
+
+impl ResourcePoolName {
+    /// The name as written.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl FromStr for ResourcePoolName {
+    type Err = ResourcePoolNameError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value.is_empty()
+            || matches!(value, "." | "..")
+            || value
+                .chars()
+                .any(|character| matches!(character, '/' | '\\' | '\0'))
+        {
+            return Err(ResourcePoolNameError(value.to_owned()));
+        }
+        Ok(Self(value.to_owned()))
+    }
+}
+
+impl fmt::Display for ResourcePoolName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for ResourcePoolName {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(D::Error::custom)
+    }
+}
+
+/// A value that does not name one lock pool.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("resource pool name must be one normal path component: {0:?}")]
+pub struct ResourcePoolNameError(String);
+
+/// Canonical resource-pool shard counts attached to one task statement.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ResourceRequirements(BTreeMap<ResourcePoolName, NonZeroU32>);
+
+impl ResourceRequirements {
+    /// No resource ownership is required.
+    pub const EMPTY: Self = Self(BTreeMap::new());
+
+    /// Build one canonical resource map from positive shard counts.
+    pub fn new(
+        resources: impl IntoIterator<Item = (ResourcePoolName, u32)>,
+    ) -> Result<Self, ResourceRequirementsError> {
+        let mut declared = BTreeMap::new();
+        for (name, count) in resources {
+            let count =
+                NonZeroU32::new(count).ok_or(ResourceRequirementsError::Zero(name.clone()))?;
+            if declared.insert(name.clone(), count).is_some() {
+                return Err(ResourceRequirementsError::Duplicate(name));
+            }
+        }
+        Ok(Self(declared))
+    }
+
+    /// Declared pools in canonical name order.
+    pub fn iter(&self) -> impl Iterator<Item = (&ResourcePoolName, u32)> {
+        self.0.iter().map(|(name, count)| (name, count.get()))
+    }
+
+    /// Whether no pool constrains the task.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Whether every declared pool currently has its required shard count.
+    #[must_use]
+    pub fn are_satisfied_by(&self, environment: &Environment) -> bool {
+        self.iter().all(|(name, count)| {
+            environment
+                .resources
+                .get(name)
+                .is_some_and(|available| *available >= count)
+        })
+    }
+}
+
+/// Why a resource declaration cannot be represented.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ResourceRequirementsError {
+    /// One pool was named more than once.
+    #[error("duplicate resource pool {0}")]
+    Duplicate(ResourcePoolName),
+    /// One pool requested no shards.
+    #[error("resource pool {0} must request at least one shard")]
+    Zero(ResourcePoolName),
+}
+
+/// Claim identity retained in the resource lock's owner evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceClaimOwner {
+    /// Lane whose claim owns the resource.
+    pub lane: crate::CanonicalUuid,
+    /// Task whose claim owns the resource.
+    pub task: crate::TaskStamp,
+}
 
 /// A closed kind of environmental fact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -22,6 +139,8 @@ pub enum EnvironmentFact {
     TrustGrant,
     /// Product version of the running resident appliance.
     ApplianceVersion,
+    /// One configured lock pool observed at allocation time.
+    ResourcePool,
 }
 
 impl EnvironmentFact {
@@ -30,6 +149,7 @@ impl EnvironmentFact {
         Self::JournalSchema,
         Self::TrustGrant,
         Self::ApplianceVersion,
+        Self::ResourcePool,
     ];
 
     /// Stable wire spelling of this fact.
@@ -39,6 +159,7 @@ impl EnvironmentFact {
             Self::JournalSchema => "journal-schema",
             Self::TrustGrant => "trust-grant",
             Self::ApplianceVersion => "appliance-version",
+            Self::ResourcePool => "resource-pool",
         }
     }
 }
@@ -75,6 +196,13 @@ pub enum EnvironmentRequirement {
         /// Exclusive lower bound on the running appliance's nominal version.
         value: crate::manifest::ProductVersion,
     },
+    /// Require `shards` simultaneously available shards from one configured pool.
+    ResourcePool {
+        /// Configured `lock.<name>` identity.
+        name: ResourcePoolName,
+        /// Positive number of shards the task needs.
+        shards: NonZeroU32,
+    },
 }
 
 impl EnvironmentRequirement {
@@ -102,6 +230,20 @@ impl EnvironmentRequirement {
         Self::ApplianceVersion { value }
     }
 
+    /// Construct a configured resource-pool requirement.
+    ///
+    /// # Errors
+    ///
+    /// Refuses zero shards.
+    pub fn resource_pool(
+        name: ResourcePoolName,
+        shards: u32,
+    ) -> Result<Self, EnvironmentValueError> {
+        NonZeroU32::new(shards)
+            .map(|shards| Self::ResourcePool { name, shards })
+            .ok_or(EnvironmentValueError)
+    }
+
     /// Fact this requirement constrains.
     #[must_use]
     pub const fn fact(&self) -> EnvironmentFact {
@@ -109,6 +251,7 @@ impl EnvironmentRequirement {
             Self::JournalSchema { .. } => EnvironmentFact::JournalSchema,
             Self::TrustGrant { .. } => EnvironmentFact::TrustGrant,
             Self::ApplianceVersion { .. } => EnvironmentFact::ApplianceVersion,
+            Self::ResourcePool { .. } => EnvironmentFact::ResourcePool,
         }
     }
 
@@ -141,6 +284,16 @@ impl EnvironmentRequirement {
                 Self::ApplianceVersion { value: required },
                 EnvironmentObservation::ApplianceVersion { value: observed },
             ) => observed.precedence(required).is_gt(),
+            (
+                Self::ResourcePool {
+                    name: required_name,
+                    shards: required_shards,
+                },
+                EnvironmentObservation::ResourcePool {
+                    name: observed_name,
+                    available,
+                },
+            ) => required_name == observed_name && *available >= required_shards.get(),
             _ => false,
         }
     }
@@ -170,6 +323,7 @@ pub struct Environment {
     journal_schema: Option<NonZeroU32>,
     trust: BTreeMap<crate::Digest, crate::TrustHead>,
     appliance: Option<crate::manifest::ProductVersion>,
+    resources: BTreeMap<ResourcePoolName, u32>,
 }
 
 impl Environment {
@@ -178,6 +332,7 @@ impl Environment {
         journal_schema: None,
         trust: BTreeMap::new(),
         appliance: None,
+        resources: BTreeMap::new(),
     };
 
     /// Observe one finalized journal schema.
@@ -191,6 +346,7 @@ impl Environment {
                 journal_schema: Some(value),
                 trust: BTreeMap::new(),
                 appliance: None,
+                resources: BTreeMap::new(),
             }),
             None => Err(EnvironmentValueError),
         }
@@ -217,6 +373,20 @@ impl Environment {
         self
     }
 
+    /// Add one lock pool's currently available shard count.
+    #[must_use]
+    pub fn with_resource_pool(mut self, name: ResourcePoolName, available: u32) -> Self {
+        self.resources.insert(name, available);
+        self
+    }
+
+    /// Resource-pool observations carried by this environment.
+    pub fn resource_pools(&self) -> impl Iterator<Item = (&ResourcePoolName, u32)> {
+        self.resources
+            .iter()
+            .map(|(name, available)| (name, *available))
+    }
+
     fn observation(&self, requirement: &EnvironmentRequirement) -> Option<EnvironmentObservation> {
         match requirement {
             EnvironmentRequirement::JournalSchema { .. } => self
@@ -235,6 +405,14 @@ impl Environment {
                 .appliance
                 .clone()
                 .map(|value| EnvironmentObservation::ApplianceVersion { value }),
+            EnvironmentRequirement::ResourcePool { name, .. } => {
+                self.resources.get(name).copied().map(|available| {
+                    EnvironmentObservation::ResourcePool {
+                        name: name.clone(),
+                        available,
+                    }
+                })
+            }
         }
     }
 
@@ -271,6 +449,13 @@ pub enum EnvironmentObservation {
         /// Observed nominal version, with its build metadata.
         value: crate::manifest::ProductVersion,
     },
+    /// Available shards in one configured resource pool.
+    ResourcePool {
+        /// Pool whose topology was observed.
+        name: ResourcePoolName,
+        /// Number of shards available at the observation instant.
+        available: u32,
+    },
 }
 
 impl EnvironmentObservation {
@@ -293,6 +478,7 @@ impl EnvironmentObservation {
             Self::JournalSchema { .. } => EnvironmentFact::JournalSchema,
             Self::TrustGrant { .. } => EnvironmentFact::TrustGrant,
             Self::ApplianceVersion { .. } => EnvironmentFact::ApplianceVersion,
+            Self::ResourcePool { .. } => EnvironmentFact::ResourcePool,
         }
     }
 }
@@ -312,20 +498,38 @@ impl EnvironmentRequirements {
 
     /// Build a canonical collection in the exact supplied order.
     ///
+    /// Different fact kinds follow [`EnvironmentFact`] order. Resource-pool
+    /// requirements may repeat for distinct pools and sort by pool name.
+    ///
     /// # Errors
     ///
-    /// Refuses duplicate fact kinds and out-of-order entries. It never sorts or
-    /// deduplicates caller input because normalization would admit two wire
-    /// documents for one authority value.
+    /// Refuses duplicate facts, duplicate resource names, and out-of-order
+    /// entries. It never sorts or deduplicates caller input.
     pub fn new(requirements: Vec<EnvironmentRequirement>) -> Result<Self, RequirementsError> {
         for pair in requirements.windows(2) {
-            let previous = pair[0].fact();
-            let current = pair[1].fact();
-            if previous == current {
-                return Err(RequirementsError::Duplicate(current));
-            }
-            if previous > current {
-                return Err(RequirementsError::OutOfOrder { previous, current });
+            match (&pair[0], &pair[1]) {
+                (
+                    EnvironmentRequirement::ResourcePool { name: previous, .. },
+                    EnvironmentRequirement::ResourcePool { name: current, .. },
+                ) => match previous.cmp(current) {
+                    std::cmp::Ordering::Less => {}
+                    std::cmp::Ordering::Equal => {
+                        return Err(RequirementsError::DuplicateResource);
+                    }
+                    std::cmp::Ordering::Greater => {
+                        return Err(RequirementsError::ResourceOutOfOrder);
+                    }
+                },
+                (previous, current) if previous.fact() == current.fact() => {
+                    return Err(RequirementsError::Duplicate(current.fact()));
+                }
+                (previous, current) if previous.fact() > current.fact() => {
+                    return Err(RequirementsError::OutOfOrder {
+                        previous: previous.fact(),
+                        current: current.fact(),
+                    });
+                }
+                _ => {}
             }
         }
         Ok(Self(requirements))
@@ -341,6 +545,44 @@ impl EnvironmentRequirements {
     #[must_use]
     pub fn as_slice(&self) -> &[EnvironmentRequirement] {
         &self.0
+    }
+
+    /// Declared resource-pool needs in canonical pool-name order.
+    pub fn resource_pools(&self) -> impl Iterator<Item = (&ResourcePoolName, u32)> {
+        self.0.iter().filter_map(|requirement| match requirement {
+            EnvironmentRequirement::ResourcePool { name, shards } => Some((name, shards.get())),
+            _ => None,
+        })
+    }
+
+    /// Compile authored resource entries into their canonical task map.
+    #[must_use]
+    pub fn compiled_resources(&self) -> ResourceRequirements {
+        ResourceRequirements(
+            self.0
+                .iter()
+                .filter_map(|requirement| match requirement {
+                    EnvironmentRequirement::ResourcePool { name, shards } => {
+                        Some((name.clone(), *shards))
+                    }
+                    _ => None,
+                })
+                .collect(),
+        )
+    }
+
+    /// Retain only scalar environmental facts.
+    #[must_use]
+    pub fn without_resources(&self) -> Self {
+        Self(
+            self.0
+                .iter()
+                .filter(|requirement| {
+                    !matches!(requirement, EnvironmentRequirement::ResourcePool { .. })
+                })
+                .cloned()
+                .collect(),
+        )
     }
 
     /// Whether no environment fact constrains this task.
@@ -412,6 +654,10 @@ impl AsRef<[EnvironmentRequirement]> for EnvironmentRequirements {
 pub enum RequirementsError {
     /// One fact kind appeared more than once.
     Duplicate(EnvironmentFact),
+    /// One resource pool appeared more than once.
+    DuplicateResource,
+    /// Resource pools were not in canonical name order.
+    ResourceOutOfOrder,
     /// Fact kinds were not in their declared canonical order.
     OutOfOrder {
         /// Fact immediately preceding the inversion.
@@ -429,6 +675,10 @@ impl fmt::Display for RequirementsError {
                 formatter,
                 "environment fact {current} must sort before {previous}"
             ),
+            Self::DuplicateResource => formatter.write_str("duplicate resource pool requirement"),
+            Self::ResourceOutOfOrder => {
+                formatter.write_str("resource pool requirements are not in canonical name order")
+            }
         }
     }
 }

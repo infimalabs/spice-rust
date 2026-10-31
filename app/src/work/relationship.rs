@@ -676,6 +676,7 @@ mod tests {
                     description: None,
                     acceptance: Vec::new(),
                     requirements: EnvironmentRequirements::EMPTY,
+                    resources: wire::ResourceRequirements::EMPTY,
                     project: "canvas.work".to_owned(),
                     filing: wire::TaskFiling::Filed,
                     priority: None,

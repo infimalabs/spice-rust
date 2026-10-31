@@ -77,6 +77,7 @@ fn add(journal: &mut Journal, shape: Shape<'_>) -> TaskStamp {
         description: None,
         acceptance: vec!["accepted".to_owned()],
         requirements: wire::EnvironmentRequirements::default(),
+        resources: wire::ResourceRequirements::default(),
         project: "designs".to_owned(),
         filing: wire::TaskFiling::Filed,
         priority: None,

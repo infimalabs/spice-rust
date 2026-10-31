@@ -14,12 +14,24 @@ pub(crate) type OccupantProfiles<'a> = Option<&'a std::sync::Mutex<message_surfa
 /// Terminal task heads stay behind the snapshot index. Only dependency stamps
 /// named by the live graph consult their compact standing, so request work is
 /// proportional to live vertices and edges rather than retained history.
+#[cfg(test)]
 pub(crate) fn read_next_work(
     bus: &Bus,
     observed: &bus::TaskSnapshot,
     principal: wire::Actor,
     allocation: &board::NextConfig,
     profiles: OccupantProfiles<'_>,
+) -> Result<BoardAnswer, Outcome<CommandAnswer>> {
+    read_next_work_with_resources(bus, observed, principal, allocation, profiles, None)
+}
+
+pub(in crate::board_command) fn read_next_work_with_resources(
+    bus: &Bus,
+    observed: &bus::TaskSnapshot,
+    principal: wire::Actor,
+    allocation: &board::NextConfig,
+    profiles: OccupantProfiles<'_>,
+    resources: Option<&crate::board_command::resources::ResourceClaims>,
 ) -> Result<BoardAnswer, Outcome<CommandAnswer>> {
     let residency = observed.residency().ok_or_else(|| {
         store_fault(
@@ -41,7 +53,10 @@ pub(crate) fn read_next_work(
     let held = held_index(&entries, &principal)?;
 
     let subscription = allocation_subscription(residency.body(), &principal)?;
-    let environment = observed.environment();
+    let mut environment = observed.environment();
+    if let Some(resources) = resources {
+        environment = resources.observe(environment, &entries)?;
+    }
     let now = current_instant()?;
     let design_request = if held.is_none() {
         project_design_request(bus, observed, &entries, residency.body(), &principal)?
@@ -99,7 +114,7 @@ pub(crate) fn read_next_work(
         }
     };
 
-    next_answer(observed, residency, &principal, state)
+    next_answer(observed, residency, &principal, state, &environment)
 }
 
 fn next_answer(
@@ -107,6 +122,7 @@ fn next_answer(
     residency: &journal::JournalHead<wire::ResidencyHead>,
     principal: &wire::Actor,
     next: NextWorkState,
+    environment: &wire::Environment,
 ) -> Result<BoardAnswer, Outcome<CommandAnswer>> {
     let cursor = observed.cursor().ok_or_else(|| {
         store_fault(
@@ -140,6 +156,10 @@ fn next_answer(
         closures: Default::default(),
         steps: Default::default(),
         trust: positioned_trust(observed),
+        resource_pools: environment
+            .resource_pools()
+            .map(|(name, available)| (name.clone(), available))
+            .collect(),
         appliance,
         residency,
         addresses: Default::default(),

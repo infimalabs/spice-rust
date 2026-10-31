@@ -130,6 +130,7 @@ fn task_added(
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
+        resources: wire::ResourceRequirements::default(),
         project,
         filing: wire::TaskFiling::Filed,
         priority: None,

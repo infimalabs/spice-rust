@@ -35,6 +35,7 @@ fn entries() -> Vec<board::Entry> {
                 description: None,
                 acceptance: Vec::new(),
                 requirements: Default::default(),
+                resources: Default::default(),
                 project: "board.graph".to_owned(),
                 filing: wire::TaskFiling::Filed,
                 priority: None,

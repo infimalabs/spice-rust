@@ -977,6 +977,7 @@ fn unheld(entry: &Entry) -> bool {
 #[must_use]
 pub fn environment_satisfied(entry: &Entry, environment: &wire::Environment) -> bool {
     entry.statement().requirements.are_satisfied_by(environment)
+        && entry.statement().resources.are_satisfied_by(environment)
 }
 
 /// Whether one entry satisfies the same eligibility law as allocation.

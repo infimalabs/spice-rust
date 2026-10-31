@@ -69,6 +69,7 @@ fn review_row(disposition: ClaimDisposition) -> Entry {
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
+        resources: wire::ResourceRequirements::default(),
         project: "board.kernel".to_owned(),
         filing: wire::TaskFiling::Filed,
         priority: None,

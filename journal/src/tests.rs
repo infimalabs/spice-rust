@@ -926,6 +926,7 @@ fn task_head() -> TaskHead {
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
+        resources: wire::ResourceRequirements::default(),
         project: "journal".to_owned(),
         filing: wire::TaskFiling::Filed,
         priority: None,

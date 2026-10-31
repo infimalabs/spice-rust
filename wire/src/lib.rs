@@ -96,7 +96,8 @@ pub use envelope::{
 };
 pub use environment::{
     Environment, EnvironmentFact, EnvironmentObservation, EnvironmentRequirement,
-    EnvironmentRequirements,
+    EnvironmentRequirements, ResourceClaimOwner, ResourcePoolName, ResourcePoolNameError,
+    ResourceRequirements, ResourceRequirementsError,
 };
 pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{

@@ -649,6 +649,7 @@ mod tests {
             description: None,
             acceptance: Vec::new(),
             requirements: wire::EnvironmentRequirements::default(),
+            resources: wire::ResourceRequirements::default(),
             project: "board.possession".to_owned(),
             filing: wire::TaskFiling::Filed,
             priority: None,
