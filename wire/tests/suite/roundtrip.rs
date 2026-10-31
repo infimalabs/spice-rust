@@ -168,7 +168,7 @@ fn envelope_matches_the_specified_document() {
     assert_eq!(envelope.cause, Some(seq(48190)));
     assert_eq!(envelope.fact.kind(), FactKind::TaskPhased);
     assert_eq!(envelope.fact.body.phase.as_str(), "verify");
-    assert!(!envelope.is_root());
+    assert!(envelope.cause.is_some());
 }
 
 #[test]
@@ -480,7 +480,7 @@ fn envelope_omits_cause_at_a_chain_root() {
     let decoded: Envelope<Fact<body::TaskPhased>> =
         wire::decode(encoded.as_bytes()).expect("decodes");
     assert_eq!(decoded, root);
-    assert!(decoded.is_root());
+    assert!(decoded.cause.is_none());
 }
 
 #[test]

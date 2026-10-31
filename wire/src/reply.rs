@@ -882,27 +882,6 @@ impl Refusal {
         }
     }
 
-    /// Complete detail for a non-CLI surface that retains the reason separately.
-    ///
-    /// Evidence refusals keep their bounded evidence before the human summary;
-    /// every other form retains the same explanation selected by [`Self::explanation`].
-    #[must_use]
-    pub fn complete_explanation(&self) -> String {
-        match self {
-            Self::Evidence {
-                evidence, summary, ..
-            } => {
-                let evidence = evidence.trim_end_matches('\n');
-                if evidence.is_empty() {
-                    summary.clone()
-                } else {
-                    format!("{evidence}\n{summary}")
-                }
-            }
-            _ => self.explanation().to_owned(),
-        }
-    }
-
     /// Predicate diagnostic carried by repairable and bare forms.
     #[must_use]
     pub fn diagnostic(&self) -> Option<&RefusalDiagnostic> {

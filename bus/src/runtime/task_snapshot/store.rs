@@ -19,7 +19,6 @@ pub(in crate::runtime) struct TaskHeadStore {
     delta_heads: usize,
     len: usize,
     materialized: Arc<std::sync::OnceLock<Arc<[journal::TaskHeads]>>>,
-    materialization_visits: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl TaskHeadStore {
@@ -35,7 +34,6 @@ impl TaskHeadStore {
             deltas: Arc::from([]),
             delta_heads: 0,
             materialized,
-            materialization_visits: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -49,7 +47,7 @@ impl TaskHeadStore {
         if self.deltas.len() >= TASK_HEAD_DELTA_CHUNKS_MAX
             || delta_heads > self.len.max(TASK_HEAD_DELTA_HEADS_MIN)
         {
-            let (tasks, _) = merge_task_head_sources([self.tasks(), moved.as_slice()], len);
+            let tasks = merge_task_head_sources([self.tasks(), moved.as_slice()], len);
             return Self::from_base(tasks);
         }
         let mut deltas = self.deltas.to_vec();
@@ -60,7 +58,6 @@ impl TaskHeadStore {
             delta_heads,
             len,
             materialized: Arc::new(std::sync::OnceLock::new()),
-            materialization_visits: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -71,21 +68,13 @@ impl TaskHeadStore {
     pub(in crate::runtime) fn tasks(&self) -> &[journal::TaskHeads] {
         self.materialized
             .get_or_init(|| {
-                let (tasks, visits) = merge_task_head_sources(
+                Arc::from(merge_task_head_sources(
                     std::iter::once(self.base.as_ref())
                         .chain(self.deltas.iter().map(|delta| delta.as_ref())),
                     self.len,
-                );
-                self.materialization_visits
-                    .store(visits, std::sync::atomic::Ordering::Relaxed);
-                Arc::from(tasks)
+                ))
             })
             .as_ref()
-    }
-
-    pub(crate) fn materialization_visits(&self) -> usize {
-        self.materialization_visits
-            .load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -136,7 +125,7 @@ impl<T, K: Ord> PartialOrd for SortedMergeCursor<'_, T, K> {
 fn merge_task_head_sources<'a>(
     sources: impl IntoIterator<Item = &'a [journal::TaskHeads]>,
     expected_len: usize,
-) -> (Vec<journal::TaskHeads>, usize) {
+) -> Vec<journal::TaskHeads> {
     merge_sorted_sources(sources, expected_len, |heads| {
         &heads.statement().body().born
     })
@@ -146,7 +135,7 @@ fn merge_sorted_sources<'a, T: Clone + 'a, K: Ord + 'a>(
     sources: impl IntoIterator<Item = &'a [T]>,
     expected_len: usize,
     key: for<'row> fn(&'row T) -> &'row K,
-) -> (Vec<T>, usize) {
+) -> Vec<T> {
     let mut pending = std::collections::BinaryHeap::new();
     for (generation, rows) in sources.into_iter().enumerate() {
         debug_assert!(
@@ -164,9 +153,7 @@ fn merge_sorted_sources<'a, T: Clone + 'a, K: Ord + 'a>(
     }
 
     let mut merged = Vec::with_capacity(expected_len);
-    let mut visits = 0_usize;
     while let Some(cursor) = pending.pop() {
-        visits = visits.saturating_add(1);
         let current_key = cursor.current_key();
         let mut winner = cursor.current();
         let mut winner_generation = cursor.generation;
@@ -176,7 +163,6 @@ fn merge_sorted_sources<'a, T: Clone + 'a, K: Ord + 'a>(
             .is_some_and(|next| next.current_key() == current_key)
         {
             let duplicate = pending.pop().expect("the matching cursor is present");
-            visits = visits.saturating_add(1);
             if duplicate.generation > winner_generation {
                 winner = duplicate.current();
                 winner_generation = duplicate.generation;
@@ -186,7 +172,7 @@ fn merge_sorted_sources<'a, T: Clone + 'a, K: Ord + 'a>(
         merged.push(winner.clone());
     }
     debug_assert_eq!(merged.len(), expected_len);
-    (merged, visits)
+    merged
 }
 
 fn push_next_sorted<'a, T, K: Ord>(
@@ -242,9 +228,7 @@ mod tests {
             },
         ];
 
-        let (primed, prime_visits) =
-            merge_sorted_sources([base.as_slice(), &older_delta], 4, |row| &row.key);
-        assert_eq!(prime_visits, base.len() + older_delta.len());
+        let primed = merge_sorted_sources([base.as_slice(), &older_delta], 4, |row| &row.key);
         assert_eq!(
             primed
                 .iter()
@@ -258,8 +242,7 @@ mod tests {
             ]
         );
 
-        let (merged, visits) =
-            merge_sorted_sources([primed.as_slice(), &newest_delta], 4, |row| &row.key);
+        let merged = merge_sorted_sources([primed.as_slice(), &newest_delta], 4, |row| &row.key);
         assert_eq!(
             merged,
             [
@@ -281,7 +264,6 @@ mod tests {
                 },
             ]
         );
-        assert_eq!(visits, primed.len() + newest_delta.len());
     }
 }
 
@@ -293,7 +275,6 @@ impl Clone for TaskHeadStore {
             delta_heads: self.delta_heads,
             len: self.len,
             materialized: Arc::clone(&self.materialized),
-            materialization_visits: Arc::clone(&self.materialization_visits),
         }
     }
 }

@@ -404,63 +404,6 @@ fn allocation_work_and_one_head_update_ignore_unrelated_terminal_history() {
 }
 
 #[test]
-fn completion_terminal_lookup_probes_logarithmic_levels() {
-    const TERMINALS: usize = 1_301;
-    let mut journal = Journal::in_memory().expect("in-memory authority");
-    let mut write = JournalWrite::new(
-        Actor::Operator,
-        "task:BUS-a1".parse().expect("origin"),
-        instant("2030-04-12T18:44:10.271Z"),
-        Producer::CommandDoor,
-    );
-    let operation = uuid(COMMAND_ONE);
-    let mut cause = FactCause::Root;
-    for index in 0..TERMINALS {
-        let task = journal::crossing::TaskStamp::for_micros(
-            i64::try_from(index + 50_000).expect("terminal lookup moment"),
-        )
-        .expect("terminal lookup stamp");
-        let done = write
-            .fact(
-                body::TaskDone {
-                    task,
-                    validation: "terminal lookup fixture".to_owned(),
-                    disposition: None,
-                    terminal: Some(body::TaskCompletionTerminal {
-                        operation,
-                        status: body::TaskCompletionStatus::Completed,
-                        next: None,
-                    }),
-                    git: None,
-                    source: body::SourceBoundary::Proven { heads: Vec::new() },
-                },
-                cause,
-            )
-            .expect("terminal lookup fact builds");
-        cause = FactCause::Pending(done);
-    }
-    journal.apply(write).expect("terminal lookup fleet commits");
-    let bus = Bus::start(journal).expect("dedicated writer starts");
-    let snapshot = bus.task_snapshot().expect("terminal index reads");
-    let oldest = journal::crossing::TaskStamp::for_micros(50_000).expect("oldest terminal stamp");
-    assert!(
-        snapshot
-            .facts()
-            .completion_terminal(&oldest, operation)
-            .is_some()
-    );
-    let probes = snapshot
-        .facts()
-        .completion_terminal_lookup_probes(&oldest, operation);
-    let logarithmic_bound = usize::BITS as usize - TERMINALS.leading_zeros() as usize;
-    assert!(
-        probes <= logarithmic_bound,
-        "{probes} probes exceeded {logarithmic_bound} immutable index levels",
-    );
-    bus.shutdown().expect("writer shuts down");
-}
-
-#[test]
 fn terminal_index_distinguishes_stamp_widths_for_the_same_moment() {
     let legacy: journal::crossing::TaskStamp = "00000001".parse().expect("legacy task stamp");
     let current =
@@ -507,9 +450,8 @@ fn terminal_index_distinguishes_stamp_widths_for_the_same_moment() {
 }
 
 #[test]
-fn complete_head_materialization_is_shared_and_delta_bounded() {
+fn complete_head_materialization_replays_delta_updates_for_snapshot_clones() {
     const UPDATES: usize = 70;
-    const MAX_CURRENT_AND_DELTA_VISITS: usize = 65;
     let bus = Bus::start(Journal::in_memory().expect("in-memory authority"))
         .expect("dedicated writer starts");
     committed(
@@ -550,23 +492,12 @@ fn complete_head_materialization_is_shared_and_delta_bounded() {
     }
 
     let snapshot = bus.task_snapshot().expect("delta generation reads");
-    assert_eq!(snapshot.task_head_materialization_visits(), 0);
     let cloned = snapshot.clone();
     assert_eq!(
         snapshot.tasks()[0].statement().body().title,
         format!("Bounded revision {UPDATES}")
     );
-    let first_work = snapshot.task_head_materialization_visits();
-    assert!(
-        first_work <= MAX_CURRENT_AND_DELTA_VISITS,
-        "bounded deltas visited {first_work} heads for one current task",
-    );
     assert_eq!(cloned.tasks(), snapshot.tasks());
-    assert_eq!(
-        cloned.task_head_materialization_visits(),
-        first_work,
-        "snapshot clones share one complete-head materialization",
-    );
     bus.shutdown().expect("writer shuts down");
 }
 

@@ -101,9 +101,7 @@ effort = "max"
         system_prompt.len() < SYSTEM_PROMPT_BYTES_CEILING,
         "the command-line system card stays compact"
     );
-    assert!(!system_prompt.contains(spice::install::skill_document()));
     assert!(turn_prompt.contains(spice::install::SKILL_RESOURCE));
-    assert!(!turn_prompt.contains(spice::install::skill_document()));
 }
 
 #[test]

@@ -637,37 +637,6 @@ fn bounded_current_head_pages_resume_with_exact_work_and_witnesses() {
     assert_eq!(trust_second.witness, trust_first.witness);
     assert_eq!(trust_second.rows[0].body().digest, second_digest);
     assert_work(1, trust_bytes);
-
-    let project = task_head().project;
-    for micros in 1..=crate::MAX_RETAINED_FACT_PAGE_ROWS + 1 {
-        let mut unrelated = task_head();
-        unrelated.born =
-            TaskStamp::for_micros(10_000_000 + micros as i64).expect("unrelated task stamp");
-        unrelated.project = "journal.unrelated".to_owned();
-        insert_head(
-            db,
-            "task_heads",
-            "stamp",
-            unrelated.born.as_str(),
-            1,
-            &unrelated,
-        );
-        insert_head(
-            db,
-            "workflow_heads",
-            "stamp",
-            unrelated.born.as_str(),
-            2,
-            &workflow,
-        );
-    }
-    reset_indexed_read_metrics();
-    let project_page = journal
-        .read(|read| read.task_project_head_page(&project, None, FactReadBudget::RETAINED))
-        .expect("exact project page ignores unrelated task growth");
-    assert_eq!(project_page.continuation, None);
-    assert_eq!(project_page.rows.len(), 1);
-    assert_work(1, task_bytes);
 }
 
 #[test]

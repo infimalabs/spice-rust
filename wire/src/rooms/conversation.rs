@@ -84,17 +84,6 @@ impl fmt::Display for RoomReceiptRef {
     }
 }
 
-/// How one directed delivery is carried.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
-pub enum RoomDelivery {
-    /// A lane destination: one native steering directive opened in the same
-    /// write is the delivery's only receipt.
-    Directive { directive: CanonicalUuid },
-    /// The operator destination: one room operator item.
-    Item { item: RoomReceiptRef },
-}
-
 /// Semantic message verb. Operator item controls use [`RoomReceiptControl`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "verb", rename_all = "lowercase", deny_unknown_fields)]

@@ -130,17 +130,3 @@ fn repair_commands_cannot_be_empty_or_option_shaped() {
         );
     }
 }
-
-#[test]
-fn complete_non_cli_explanation_retains_evidence_before_its_summary() {
-    let refusal = Refusal::evidence(
-        "gate::fixture-regressed",
-        "first finding\nsecond finding\n",
-        "repair the fixture",
-    );
-    assert_eq!(refusal.explanation(), "repair the fixture");
-    assert_eq!(
-        refusal.complete_explanation(),
-        "first finding\nsecond finding\nrepair the fixture",
-    );
-}

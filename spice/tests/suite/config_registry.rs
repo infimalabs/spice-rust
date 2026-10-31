@@ -458,11 +458,6 @@ fn templates_are_unique_canonical_non_overlapping_and_stably_ordered() {
     for entry in descriptors() {
         let template = entry.template().as_str();
         assert!(unique.insert(template), "duplicate template {template}");
-        assert_eq!(
-            entry.template().is_dynamic(),
-            template.contains("<name>") || template.contains("[]"),
-            "template shape drifted for {template}"
-        );
         for segment in template.split('.') {
             let word = segment
                 .strip_suffix("[]")

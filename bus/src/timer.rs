@@ -146,16 +146,6 @@ mod native {
             receiver.recv().map_err(|_| TimerError::Closed)?
         }
 
-        /// Arm the expiry carried by a durable lease head as a claim-lapse
-        /// event.
-        pub fn arm_lease(
-            &self,
-            owner: impl Into<String>,
-            lease: &journal::crossing::LeaseHead,
-        ) -> Result<TimerId, TimerError> {
-            self.arm(owner, TimerKind::ClaimLapse, lease.expiry)
-        }
-
         /// Cancel an armed wait before it emits an event.
         pub fn cancel(&self, id: TimerId) -> Result<bool, TimerError> {
             let (answer, receiver) = mpsc::sync_channel(1);

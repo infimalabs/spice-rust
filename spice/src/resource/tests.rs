@@ -435,14 +435,12 @@ fn rack_urls_refuse_queries_writes_and_digest_or_uuid_generations() {
 
 #[test]
 fn the_skill_bootstrap_stays_compact_and_names_the_resource() {
-    let document = spice::install::skill_document();
     let bootstrap = spice::install::skill_bootstrap();
     assert!(
         bootstrap.len() < spice::install::SKILL_BOOTSTRAP_BYTES_CEILING,
         "the bootstrap stays below its separate 1 KiB budget"
     );
     assert!(bootstrap.contains(spice::install::SKILL_RESOURCE));
-    assert!(!bootstrap.contains(document));
 }
 
 #[test]

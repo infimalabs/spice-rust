@@ -21,7 +21,7 @@ use sill::{
 
 use wire::manifest::macho_uuid_is_canonical;
 
-use super::{Repository, SymbolVerification, symbols};
+use super::{Repository, SymbolVerification};
 
 /// Largest sample report the symbolizer reads.
 pub const MAX_SAMPLE_BYTES: u64 = 4 * 1024 * 1024;
@@ -394,21 +394,6 @@ impl SampleTarget {
             executable: verification.executable().to_owned(),
             text_address: verification.text_address(),
             dwarf: verification.dwarf_path(repository),
-        }
-    }
-
-    /// An executable image read directly, paired with the DWARF at `dwarf`.
-    ///
-    /// The identity comes from the image bytes exactly as verification reads
-    /// them; an image without `LC_UUID` yields an empty UUID no report matches.
-    #[must_use]
-    pub fn from_image(executable: &str, bytes: &[u8], dwarf: PathBuf) -> Self {
-        Self {
-            image: file_name(executable),
-            uuid: symbols::executable_uuid(bytes).unwrap_or_default(),
-            executable: executable.to_owned(),
-            text_address: symbols::text_segment_address(bytes),
-            dwarf,
         }
     }
 

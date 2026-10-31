@@ -237,10 +237,4 @@ impl<T> Provenance<T> {
             | Self::Flag { builtin } => builtin.as_ref(),
         }
     }
-
-    /// Whether this winner shadows a compiled value.
-    #[must_use]
-    pub const fn shadows_builtin(&self) -> bool {
-        self.builtin().is_some()
-    }
 }

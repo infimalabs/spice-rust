@@ -324,7 +324,6 @@ const SERVED: &[&[&str]] = &[
     &["task", "artifact", "show"],
     &["room", "history"],
     &["room", "inbox"],
-    &["room", "result"],
     &["room", "relevance"],
     &["room", "awareness"],
     &["design", "show"],

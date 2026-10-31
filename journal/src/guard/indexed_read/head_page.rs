@@ -47,24 +47,6 @@ impl JournalRead<'_> {
         )
     }
 
-    /// Read one joined page of current task heads for an exact project.
-    pub fn task_project_head_page(
-        &self,
-        project: &str,
-        after: Option<&wire::TaskStamp>,
-        budget: FactReadBudget,
-    ) -> Result<TaskHeadPage, GuardError> {
-        self.task_head_page_with(
-            TASK_PROJECT_PAGE_SQL,
-            params![
-                project,
-                after.map(wire::TaskStamp::as_str),
-                query_limit(budget)?
-            ],
-            budget,
-        )
-    }
-
     /// Current direct neighbors in either dependency direction, including settled work.
     pub fn task_neighbor_head_page(
         &self,
@@ -241,21 +223,6 @@ const TASK_PAGE_SQL: &str = "WITH task_keys(stamp) AS (\
   LEFT JOIN lease_heads AS lease ON lease.stamp = keys.stamp \
  ORDER BY keys.stamp LIMIT ?2";
 
-const TASK_PROJECT_PAGE_SQL: &str = "WITH task_keys(stamp) AS (\
-    SELECT stamp FROM task_heads \
-     WHERE json_extract(CAST(body AS TEXT), '$.project') = ?1 \
-       AND stamp > COALESCE(?2, '') ORDER BY stamp LIMIT ?3\
-) SELECT keys.stamp, statement.head_seq, length(statement.body), statement.body, \
-         workflow.head_seq, length(workflow.body), workflow.body, \
-         claim.head_seq, length(claim.body), claim.body, \
-         lease.head_seq, length(lease.body), lease.body \
-  FROM task_keys AS keys \
-  LEFT JOIN task_heads AS statement ON statement.stamp = keys.stamp \
-  LEFT JOIN workflow_heads AS workflow ON workflow.stamp = keys.stamp \
-  LEFT JOIN claim_heads AS claim ON claim.stamp = keys.stamp \
-  LEFT JOIN lease_heads AS lease ON lease.stamp = keys.stamp \
- ORDER BY keys.stamp LIMIT ?3";
-
 const TASK_NEIGHBOR_PAGE_SQL: &str = "WITH task_keys(stamp) AS (\
     SELECT stamp FROM task_heads \
      WHERE stamp > COALESCE(?3, '') AND (\
@@ -310,25 +277,11 @@ pub(crate) fn verify_task_page_plan(connection: &rusqlite::Connection) -> Result
             .iter()
             .any(|table| step.contains(&format!("SCAN {table} ")))
     });
-    let mut project_statement = connection
-        .prepare(&format!("EXPLAIN QUERY PLAN {TASK_PROJECT_PAGE_SQL}"))
-        .map_err(|error| error.to_string())?;
-    let project_plan = project_statement
-        .query_map(
-            params!["journal.fixture", Option::<String>::None, 3_i64],
-            |row| row.get::<_, String>(3),
-        )
-        .map_err(|error| error.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
-    let project_seek = project_plan
-        .iter()
-        .any(|step| step.contains("task_heads_project_stamp"));
-    (trust_seeks && seeks == 4 && !full_scan && project_seek)
+    (trust_seeks && seeks == 4 && !full_scan)
         .then_some(())
         .ok_or_else(|| {
             format!(
-                "expected bounded trust, global-task, and exact-project seeks, found trust={trust_plans:?} global={plan:?} project={project_plan:?}"
+                "expected bounded trust and global-task seeks, found trust={trust_plans:?} global={plan:?}"
             )
         })
 }

@@ -229,7 +229,10 @@ pub(super) fn assert_review_assignment_fact(
     assert_eq!(typed.fact.body.task, heads.statement.body.born);
     assert_eq!(typed.fact.body.reviewer, *reviewer);
     assert_eq!(typed.fact.body.phase.as_str(), "review");
-    assert!(typed.is_root(), "assignment begins the claim causal chain");
+    assert!(
+        typed.cause.is_none(),
+        "assignment begins the claim causal chain"
+    );
 
     let claim = heads.claim.as_ref().expect("review claim head");
     let won = snapshot

@@ -380,16 +380,6 @@ impl Law {
         ],
         authority: Authority::Operator,
     };
-    /// Exact unauthorized output heads plus the controller and output task heads.
-    pub const AUTHORIZE: Self = Self {
-        required: &[
-            WitnessKind::Authorization,
-            WitnessKind::Task,
-            WitnessKind::Workflow,
-        ],
-        optional: &[WitnessKind::Proposal, WitnessKind::Claim],
-        authority: Authority::Operator,
-    };
     /// Pending, unclaimed output and its exact preparation task.
     pub const ADOPT: Self = Self {
         required: &[WitnessKind::Task, WitnessKind::Workflow, WitnessKind::Claim],

@@ -50,10 +50,17 @@ fn begin(journal: &mut Journal, actor: Actor, lane: CanonicalUuid) -> Commit {
 }
 
 fn room_horizon(journal: &Journal, lane: CanonicalUuid) -> Option<Seq> {
-    journal
-        .read(|read| read.room_catch_up_horizon(lane))
-        .expect("room horizon reads")
-        .map(|head| head.position())
+    let position: Option<i64> = journal
+        .connection
+        .query_row(
+            "SELECT (SELECT head_seq FROM room_horizons WHERE lane = ?1)",
+            [lane.to_string()],
+            |row| row.get(0),
+        )
+        .expect("room horizon reads");
+    position
+        .and_then(|position| u64::try_from(position).ok())
+        .and_then(Seq::new)
 }
 
 fn published(journal: &mut Journal, room: &TaskStamp, micros: i64) -> Seq {
