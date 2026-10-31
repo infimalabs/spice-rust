@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use board::similarity::{
-    FrequencyProfile, GenerationMismatch, NARROW_MATCH_FLOOR, Prepared, TermCounts,
-    WIDE_MATCH_FLOOR,
+    FrequencyProfile, GenerationMismatch, ITEM_MATCH_FLOOR, NARROW_MATCH_FLOOR, Prepared,
+    TermCounts, WIDE_MATCH_FLOOR,
 };
 use journal::{GuardError, JournalRead};
 use spice::rooms::awareness::request_questions;
@@ -17,9 +17,9 @@ use spice::rooms::evidence::{DesignCandidate, Digest as ProfileDigest, ProfileMa
 use spice::rooms::profile::{EvidenceKey, ProfileOpportunity, ProfileOpportunityKind};
 use wire::body::TaskDone as CompletedTask;
 use wire::rooms::{
-    DesignAdmission, DesignAsk, DesignConversationEvidence, DesignItemSeries, DesignItems,
-    DesignNoticeEvidence, DesignNoticeMatch, DesignNoticeOpportunity, DesignNoticed, DesignReach,
-    DesignSession, DesignSupport, RoomContributed, RoomLeft, RoomQuestionItem,
+    DesignAdmission, DesignAsk, DesignConversationEvidence, DesignItemSeries, DesignItemState,
+    DesignItems, DesignNoticeEvidence, DesignNoticeMatch, DesignNoticeOpportunity, DesignNoticed,
+    DesignReach, DesignSession, DesignSupport, RoomContributed, RoomLeft, RoomQuestionItem,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, Domain, Producer, Seq, SequenceCode, TaskStamp,
@@ -44,6 +44,7 @@ pub(crate) fn match_score_floor(reach: DesignReach) -> f64 {
     match reach {
         DesignReach::Wide => WIDE_MATCH_FLOOR,
         DesignReach::Narrow => NARROW_MATCH_FLOOR,
+        DesignReach::Item => ITEM_MATCH_FLOOR,
     }
 }
 
@@ -446,7 +447,9 @@ impl Selection {
 /// same frequency generation, current cards, and reach floors. An owed Design
 /// that no longer clears its floor bars nothing. Whether a Design is selected
 /// is judged on its whole statement; the selection then asks every pending
-/// item, the one scoring best against the cards first.
+/// item, the one scoring best against the cards first. When no whole Design
+/// clears its floor and the session owes none, the best [quiet item](select_item)
+/// may admit a request asking only that item.
 fn select_design(
     scoring: &Scoring<'_>,
     profile: &mut spice::rooms::profile::SessionProfile,
@@ -460,12 +463,6 @@ fn select_design(
         frequency,
         prepared,
     } = *scoring;
-    let mismatch = |error: GenerationMismatch| {
-        store_fault(
-            "room::awareness-profile-generation-mismatch",
-            &error.to_string(),
-        )
-    };
     let candidate = |prepared| candidate(facts, prepared);
     let bar = match owed {
         Some(owed) => profile
@@ -477,7 +474,7 @@ fn select_design(
                     .filter(|(design, _)| design.born() == owed)
                     .map(candidate),
             )
-            .map_err(mismatch)?
+            .map_err(generation_mismatch)?
             .map(|matched| matched.score),
         None => None,
     };
@@ -489,30 +486,105 @@ fn select_design(
     let Some(matched) = profile
         .evidence_mut()
         .select(frequency, candidates)
-        .map_err(mismatch)?
+        .map_err(generation_mismatch)?
     else {
-        return Ok(None);
+        if owed.is_some() {
+            return Ok(None);
+        }
+        return select_item(scoring, profile, lane, session, kind);
     };
     if bar.is_some_and(|bar| matched.score <= bar) {
         return Ok(None);
     }
     let design: &board::Entry = matched.design;
-    let mut selection = admitted(facts, frequency, matched)?;
+    let reach = admitting_reach(facts, design);
     let asks = pending_asks(facts, lane, session, design).unwrap_or_default();
-    let floor = match_score_floor(selection.matching.reach());
-    selection.asks = rank_asks(profile, frequency, design, asks, floor).map_err(mismatch)?;
+    let mut selection = selected(design, reach, frequency, matched, Vec::new())?;
+    selection.asks = rank_asks(profile, frequency, design, asks, match_score_floor(reach))
+        .map_err(generation_mismatch)?;
     Ok(Some(selection))
 }
 
-/// The selection one admitted match makes, scored under the reach its Design
-/// admits now; its asks are ranked by the caller.
-fn admitted(
-    facts: &bus::TaskFacts,
+fn generation_mismatch(error: GenerationMismatch) -> Outcome<()> {
+    store_fault(
+        "room::awareness-profile-generation-mismatch",
+        &error.to_string(),
+    )
+}
+
+/// One quiet question item of an open Design, weighted as its item text read
+/// with the Design's pitch.
+struct ItemCandidate<'e> {
+    design: &'e board::Entry,
+    ask: DesignAsk,
+    vector: Prepared,
+}
+
+/// The quiet item `kind` admits, still unasked and unanswered in this session,
+/// whose text read with its Design's pitch scores best against the session's
+/// cards at or above [`ITEM_MATCH_FLOOR`], as a request asking only that item.
+/// Unopposed, contested, and concurred items never admit by themselves.
+fn select_item(
+    scoring: &Scoring<'_>,
+    profile: &mut spice::rooms::profile::SessionProfile,
+    lane: CanonicalUuid,
+    session: &DesignSession,
+    kind: &ProfileOpportunityKind,
+) -> CommandResult<Option<Selection>> {
+    let Scoring {
+        facts,
+        frequency,
+        prepared,
+    } = *scoring;
+    let mut items = Vec::new();
+    for (design, _) in prepared
+        .iter()
+        .filter(|(design, _)| opportunity_design_matches(kind, design))
+    {
+        let statement = design.statement();
+        for ask in pending_asks(facts, lane, session, design).unwrap_or_default() {
+            if ask.state != DesignItemState::Quiet {
+                continue;
+            }
+            let Some(text) = ask.question.item(&statement.acceptance) else {
+                continue;
+            };
+            let Some(vector) =
+                frequency.prepare(&TermCounts::from_texts([text, statement.pitch.as_str()]))
+            else {
+                continue;
+            };
+            items.push(ItemCandidate {
+                design,
+                ask,
+                vector,
+            });
+        }
+    }
+    let candidates = items
+        .iter()
+        .map(|item| DesignCandidate::new(item.design.born(), item, &item.vector, ITEM_MATCH_FLOOR));
+    let Some(matched) = profile
+        .evidence_mut()
+        .select(frequency, candidates)
+        .map_err(generation_mismatch)?
+    else {
+        return Ok(None);
+    };
+    let item: &ItemCandidate<'_> = matched.design;
+    let ask = item.ask.clone();
+    let design = item.design;
+    selected(design, DesignReach::Item, frequency, matched, vec![ask]).map(Some)
+}
+
+/// The selection `matched` makes for `design` at `reach`, asking `asks`.
+fn selected<T>(
+    design: &board::Entry,
+    reach: DesignReach,
     frequency: &FrequencyProfile,
-    matched: ProfileMatch<'_, '_, EvidenceKey, board::Entry>,
+    matched: ProfileMatch<'_, '_, EvidenceKey, T>,
+    asks: Vec<DesignAsk>,
 ) -> CommandResult<Selection> {
-    let design: &board::Entry = matched.design;
-    let reach = admitting_reach(facts, design);
     let matching = DesignNoticeMatch::new(
         reach,
         matched.score,
@@ -531,7 +603,7 @@ fn admitted(
         evidence: durable_evidence(matched.evidence, matched.digest),
         excerpt: matched.excerpt.to_owned(),
         terms: matched.terms,
-        asks: Vec::new(),
+        asks,
         matching,
     })
 }

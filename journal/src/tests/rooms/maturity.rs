@@ -33,8 +33,19 @@ fn noticed(
     claimed: &TaskStamp,
     lane: CanonicalUuid,
 ) -> DesignNoticed {
+    let body = notice_body(journal, design, claimed, lane);
+    commit_notice(journal, &body).expect("notice commits");
+    body
+}
+
+fn notice_body(
+    journal: &Journal,
+    design: &TaskStamp,
+    claimed: &TaskStamp,
+    lane: CanonicalUuid,
+) -> DesignNoticed {
     let completed = Seq::new(2).expect("completion");
-    let body = DesignNoticed {
+    DesignNoticed {
         design: design.clone(),
         statement: current_statement(journal, design),
         lane,
@@ -65,7 +76,10 @@ fn noticed(
                 .expect("fixture match clears its floor"),
         ),
         asks: Vec::new(),
-    };
+    }
+}
+
+fn commit_notice(journal: &mut Journal, body: &DesignNoticed) -> Commit {
     let mut write = JournalWrite::new(
         Actor::Spice,
         "fixture:maturity".parse().expect("origin"),
@@ -75,8 +89,7 @@ fn noticed(
     write
         .fact(body.clone(), FactCause::Root)
         .expect("notice builds");
-    journal.apply(write).expect("notice commits");
-    body
+    journal.apply(write)
 }
 
 fn contributed(
@@ -456,4 +469,60 @@ fn retained_item_positions_cross_to_text_identities_from_their_current_statement
         panic!("expected a retained-row refusal, got {error}");
     };
     assert_eq!(*release, "schema-90", "{error}");
+}
+
+/// An item admission records the one quiet item it asks: one with no ask,
+/// several asks, or a heard item is refused, and the admitted ask counts as
+/// an ordinary request.
+#[test]
+fn an_item_admission_asks_exactly_one_quiet_item() {
+    use wire::rooms::{
+        DesignAdmission, DesignAsk, DesignItemState, DesignNoticeMatch, DesignReach,
+    };
+
+    let mut journal = Journal::in_memory().expect("journal");
+    let design = design(&mut journal, 1);
+    let claimed = task(&mut journal, 2, None);
+    let ask = |position: u16, text: &str, state| DesignAsk {
+        question: RoomQuestion::new(position).expect("question"),
+        item: RoomQuestionItem::of(text),
+        state,
+    };
+    let item_notice = |journal: &Journal, asks: Vec<DesignAsk>| DesignNoticed {
+        admission: DesignAdmission::Scored(
+            DesignNoticeMatch::new(DesignReach::Item, 0.4, 0.16, [2; 32])
+                .expect("fixture match clears its floor"),
+        ),
+        asks,
+        ..notice_body(journal, &design, &claimed, lane(1))
+    };
+    for (asks, case) in [
+        (Vec::new(), "no ask"),
+        (
+            vec![
+                ask(1, ITEM, DesignItemState::Quiet),
+                ask(2, "Who answers it?", DesignItemState::Quiet),
+            ],
+            "two asks",
+        ),
+        (
+            vec![ask(1, ITEM, DesignItemState::UnopposedFor)],
+            "a heard item",
+        ),
+    ] {
+        let body = item_notice(&journal, asks);
+        let result = commit_notice(&mut journal, &body);
+        assert!(
+            matches!(&result, Err(CommitError::Refused(_))),
+            "{case}: {result:?}"
+        );
+    }
+    let admitted = item_notice(&journal, vec![ask(1, ITEM, DesignItemState::Quiet)]);
+    commit_notice(&mut journal, &admitted).expect("one quiet item admits");
+    let maturity = journal
+        .read(|read| read.design_maturity(&design))
+        .expect("maturity reads");
+    let mut expected = DesignMaturity::default();
+    expected.observe_request(&admitted);
+    assert_eq!(maturity, expected);
 }

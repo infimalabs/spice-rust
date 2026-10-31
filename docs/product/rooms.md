@@ -126,6 +126,17 @@ owns each rule summarized here.
   lists the owed items in statement order, except that the one whose text,
   read with the problem sentence, scores best against any retained card view
   at or above the floor leads.
+  Whole-statement scoring dilutes vocabulary specific to one question, so when
+  no Design clears its floor and the session owes no request, the same item
+  vectors are scored against the session's cards for every quiet item of every
+  open Design, steeped or not, that the session was not yet asked and did not
+  answer. The best one at or above the item floor, equal to the narrow 0.16
+  floor, admits one request asking only that item; ties break as Design
+  selection does. Unopposed, contested, and concurred
+  items never admit by themselves. Such an item admission is recorded with the
+  reach `item`, its score, and the item floor, and its request says the work
+  matched only that one question and that leaving is a normal answer.
+  Maturity counts the ask and its answer like any other.
   A `room::noticed` record names the exact Design statement, session,
   compaction race witness, opportunity, evidence and immutable identity, one
   required admission, at most six strongest weighted overlaps, and the asked

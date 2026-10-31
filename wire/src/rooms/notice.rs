@@ -21,8 +21,8 @@ pub const DESIGN_NOTICE_TERMS: usize = 12;
 /// record keeps.
 pub const DESIGN_NOTICE_SHOWN_TERMS: usize = 6;
 
-/// How widely one Design request was cast, judged from the Design's maturity
-/// when it was selected.
+/// How widely one Design request was cast: across the whole Design, judged
+/// from its maturity when selected, or at one quiet question item.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DesignReach {
@@ -30,6 +30,10 @@ pub enum DesignReach {
     Wide,
     /// A steeped or OOPS Design invites only at the higher floor.
     Narrow,
+    /// No whole Design invited the lane, and one quiet question item, read
+    /// with its Design's pitch, cleared the item floor; the request asks
+    /// only that item.
+    Item,
 }
 
 impl fmt::Display for DesignReach {
@@ -37,6 +41,7 @@ impl fmt::Display for DesignReach {
         formatter.write_str(match self {
             Self::Wide => "wide",
             Self::Narrow => "narrow",
+            Self::Item => "item",
         })
     }
 }
@@ -436,7 +441,9 @@ pub struct DesignNoticed {
     pub admission: DesignAdmission,
     /// The question items asked, the best-scoring first and the rest in
     /// statement order. Empty asks about the whole Design: no current item
-    /// was askable of the lane, or the record predates items.
+    /// was askable of the lane, or the record predates items. An
+    /// [item](DesignReach::Item) admission asks exactly the one quiet item
+    /// that cleared its floor.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub asks: Vec<DesignAsk>,
 }

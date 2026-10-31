@@ -303,13 +303,9 @@ fn render_reason(runtime: &AppRuntime, reason: &ParticipantReason) -> Option<Htm
 /// the chip title. A request recorded before scores were retained names the
 /// release that recorded it instead of a score.
 fn invitation_match(admission: &wire::rooms::DesignAdmission) -> (String, String) {
-    let reach = |reach: wire::rooms::DesignReach| match reach {
-        wire::rooms::DesignReach::Wide => "wide",
-        wire::rooms::DesignReach::Narrow => "narrow",
-    };
     match admission {
         wire::rooms::DesignAdmission::Scored(matching) => {
-            let reach = reach(matching.reach());
+            let reach = matching.reach();
             (
                 format!(
                     "Asked · {reach} {score:.3}/{floor:.3}",
@@ -324,16 +320,10 @@ fn invitation_match(admission: &wire::rooms::DesignAdmission) -> (String, String
                 ),
             )
         }
-        wire::rooms::DesignAdmission::Unscored {
-            reach: admitted,
-            release,
-        } => {
-            let reach = reach(*admitted);
-            (
-                format!("Asked · {reach}"),
-                format!("{reach} match recorded unscored by {release}"),
-            )
-        }
+        wire::rooms::DesignAdmission::Unscored { reach, release } => (
+            format!("Asked · {reach}"),
+            format!("{reach} match recorded unscored by {release}"),
+        ),
         wire::rooms::DesignAdmission::Unreached { release } => (
             "Asked".to_owned(),
             format!("match recorded without reach or score by {release}"),

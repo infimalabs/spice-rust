@@ -312,15 +312,11 @@ impl fmt::Display for Noticed {
             self.session.identity,
             self.statement,
         )?;
-        let reach = |reach: wire::rooms::DesignReach| match reach {
-            wire::rooms::DesignReach::Wide => "wide",
-            wire::rooms::DesignReach::Narrow => "narrow",
-        };
         match &self.admission {
             wire::rooms::DesignAdmission::Scored(matching) => write!(
                 formatter,
                 " reach {} score {} floor {} fit {}",
-                reach(matching.reach()),
+                matching.reach(),
                 matching.score(),
                 matching.floor(),
                 matching.generation().as_str(),
@@ -328,11 +324,7 @@ impl fmt::Display for Noticed {
             wire::rooms::DesignAdmission::Unscored {
                 reach: admitted,
                 release,
-            } => write!(
-                formatter,
-                " reach {} unscored by {release}",
-                reach(*admitted)
-            )?,
+            } => write!(formatter, " reach {admitted} unscored by {release}")?,
             wire::rooms::DesignAdmission::Unreached { release } => {
                 write!(formatter, " unreached by {release}")?;
             }

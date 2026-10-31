@@ -168,20 +168,24 @@ pub fn request_text(request: &wire::intent::DesignRequest) -> String {
     let design = &request.design;
     let opportunity = notice_opportunity_text(&request.opportunity);
     let support = supporting_work(request);
-    let wide = match &request.admission {
-        wire::rooms::DesignAdmission::Scored(matching) => {
-            matching.reach() == wire::rooms::DesignReach::Wide
-        }
-        wire::rooms::DesignAdmission::Unscored { reach, .. } => {
-            *reach == wire::rooms::DesignReach::Wide
-        }
-        wire::rooms::DesignAdmission::Unreached { .. } => false,
+    let reach = match &request.admission {
+        wire::rooms::DesignAdmission::Scored(matching) => Some(matching.reach()),
+        wire::rooms::DesignAdmission::Unscored { reach, .. } => Some(*reach),
+        wire::rooms::DesignAdmission::Unreached { .. } => None,
     };
-    let cast = if wide {
-        " Its Design is not yet steeped, so this match was cast slightly wider than usual: \
-         a lower relevance floor admitted it."
-    } else {
-        ""
+    let cast = match (reach, request.asks.as_slice()) {
+        (Some(wire::rooms::DesignReach::Wide), _) => {
+            " Its Design is not yet steeped, so this match was cast slightly wider than usual: \
+             a lower relevance floor admitted it."
+                .to_owned()
+        }
+        (Some(wire::rooms::DesignReach::Item), [ask]) => format!(
+            " Your work did not match this Design as a whole; it matched only its question {}, \
+             so this request asks that one question. Leaving is a normal answer when it is not \
+             yours to weigh.",
+            ask.question
+        ),
+        _ => String::new(),
     };
     let head = format!(
         "Pitch: {}\nDesign request {design} \"{}\" at statement revision {} matched your work \
