@@ -32,6 +32,11 @@ mod terminal;
 pub(crate) use received::{render_attributed_received, render_received_with_classifications};
 pub(crate) use received::{render_received_with_media_quotes, render_received_with_quotes};
 
+pub(crate) const QUOTE_ICON: &str = "<svg class=\"app-card-action__icon\" \
+    width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\">\
+    <path d=\"M4 10a6 6 0 0 1 6-6v3a3 3 0 0 0-3 3h3v8H4v-8Zm10 0a6 6 0 0 1 6-6v3a3 3 0 0 0-3 3h3v8h-6v-8Z\" \
+    fill=\"currentColor\" /></svg>";
+
 /// The one parser option set for authored Markdown on every surface.
 const OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_FOOTNOTES)

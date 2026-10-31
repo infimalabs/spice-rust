@@ -529,7 +529,7 @@ fn card_actions(props: &CardActionsProps) -> Html {
                     class="app-card-action app-card-action--quote" type="button" title="Quote this message"
                     aria-label="Quote this message"
                     onclick={Callback::from(move |_| quote.emit(()))}
-                ><span class="app-card-action__icon" aria-hidden="true">{"❝"}</span></button>
+                >{Html::from_html_unchecked(AttrValue::Static(crate::composer_markdown::QUOTE_ICON))}</button>
             }
         </span>
     }

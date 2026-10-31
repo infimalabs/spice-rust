@@ -8,8 +8,10 @@ use pulldown_cmark::{Event, Tag, TagEnd};
 
 const OPEN: &str = "<div class=\"message-code\"><button type=\"button\" \
      class=\"app-card-action app-card-action--copy message-code-copy\" data-code-copy=\"\" \
-     title=\"Copy code\" aria-label=\"Copy code\"><span class=\"app-card-action__icon\" \
-     aria-hidden=\"true\">⧉</span></button>";
+     title=\"Copy code\" aria-label=\"Copy code\"><svg class=\"app-card-action__icon\" \
+     width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\">\
+     <path d=\"M7 7h14v14H7V7Zm2 2v10h10V9H9ZM3 3h14v2H5v12H3V3Z\" \
+     fill=\"currentColor\" fill-rule=\"evenodd\" /></svg></button>";
 const CLOSE: &str = "</div>\n";
 
 pub(super) fn copyable<'a>(events: impl IntoIterator<Item = Event<'a>>) -> Vec<Event<'a>> {
