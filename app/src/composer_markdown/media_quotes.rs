@@ -88,12 +88,12 @@ pub(super) fn image_preview_html(
         let target = super::escape_html_attribute(&media_quote.target.to_string());
         let name = super::escape_html_attribute(&media_quote.name);
         let action = super::escape_html_attribute(&format!("Quote {}", media_quote.name));
+        let icon = super::QUOTE_ICON;
         format!(
             "<button type=\"button\" class=\"app-card-action app-card-action--quote \
              message-image-quote\" data-image-quote-action=\"\" \
              data-image-quote-target=\"{target}\" data-image-quote-name=\"{name}\" \
-             title=\"{action}\" aria-label=\"{action}\"><span \
-             class=\"app-card-action__icon\" aria-hidden=\"true\">❝</span></button>"
+             title=\"{action}\" aria-label=\"{action}\">{icon}</button>"
         )
     });
     format!("<span class=\"message-image-shell\">{preview}{quote}</span>")

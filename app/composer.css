@@ -748,10 +748,13 @@
   z-index: 3;
   inset: 6px 0 auto auto;
 }
-/* A code block's Copy action seats against the block's inline edge as an
-   image's Quote does, just inside the border that closes it. The block box,
-   not the scrolling pre, positions it, so it stays put over wide code. */
-.markdown-body .message-code { position: relative; margin: .55em 0; }
+/* The block box avoids the floated message actions and positions Copy.
+   Its scrolling pre shares that box, so wide code cannot detach the control. */
+.markdown-body .message-code {
+  display: flow-root;
+  position: relative;
+  margin: .55em 0;
+}
 .markdown-body .message-code > pre { margin: 0; }
 .message-code-copy {
   --message-control-size: var(--app-header-control);
@@ -819,7 +822,8 @@
 .team-surface .message-controls-slot .app-card-action > svg.app-card-action__icon,
 .team-surface
   .mosaic-message-card
-  .markdown-body > .message-controls .app-card-action > svg.app-card-action__icon {
+  .markdown-body > .message-controls .app-card-action > svg.app-card-action__icon,
+.team-surface :is(.message-image-quote, .message-code-copy) > svg.app-card-action__icon {
   width: 62.5%;
   height: 62.5%;
 }

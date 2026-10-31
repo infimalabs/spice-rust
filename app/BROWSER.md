@@ -172,7 +172,9 @@ rule applies recursively to agent prose and resolved operator, agent, and peer
 quotes.
 
 Every message Play and Quote action uses the shared message control size and
-the same open-edge pair docked at the card's inline end. Provider failures lead
+the same open-edge pair docked at the card's inline end. Play, Quote, and code
+Copy use explicit SVG geometry on the same icon grid rather than font glyphs;
+message and image Quote share one shape. Provider failures lead
 their exact error text with the card's relative age and name, without prose
 punctuation rewriting. Other non-prose cards keep one attribution-and-action
 island in their card corner. A single-image cover places that same unframed
@@ -181,9 +183,10 @@ treatment.
 
 Every rendered code block carries a Copy action seated at its top-right edge,
 in the image Quote action's tapered shape, size, colours, and interaction
-treatment. The block, not its scrolling code, positions the action, so it
-stays put while wide code scrolls beneath it. It copies exactly the block's
-code text, trailing newline included, and the toast reports `Copied code` or
+treatment. The block itself avoids the floated message actions and positions
+Copy against the same visible box as its scrolling code, including inside
+nested quotes. Copy stays put while wide code scrolls beneath it. It copies
+exactly the block's code text, trailing newline included, and the toast reports `Copied code` or
 the browser's refusal. Mermaid fences render as diagrams and inline code
 carries no action.
 
