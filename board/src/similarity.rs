@@ -38,7 +38,7 @@ pub const MIN_TERM_CHARS: usize = 4;
 pub const FREQUENCY_WINDOW: usize = 256;
 /// Least cosine at which a wide Design request, over unsteeped items, invites
 /// a lane.
-pub const WIDE_MATCH_FLOOR: f64 = 0.10;
+pub const WIDE_MATCH_FLOOR: f64 = 0.08;
 /// Least cosine at which a narrow Design request, over steeped items, invites
 /// a lane.
 pub const NARROW_MATCH_FLOOR: f64 = 0.16;
