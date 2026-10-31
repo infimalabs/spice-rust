@@ -52,12 +52,6 @@ pub(super) fn verify(
         violations,
     );
     compare(
-        "design_shadows",
-        &expected.shadows,
-        &stored.shadows,
-        violations,
-    );
-    compare(
         "design_maturity",
         &expected.maturity,
         &stored.maturity,
@@ -111,7 +105,6 @@ pub(super) fn verify(
 
     Ok(usize::from(stored.partition.is_some())
         + stored.notices.len()
-        + stored.shadows.len()
         + stored.maturity.len()
         + stored.proposals.len()
         + stored.authorizations.len()

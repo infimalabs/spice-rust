@@ -7,7 +7,7 @@ const EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce9131163c3";
 const COORDINATION_PREDECESSOR: u32 = 96;
 const RELEASE: &str = "54e357267";
 
-fn plant_fact(journal: &Journal, position: i64, kind: &str, fact: serde_json::Value) {
+pub(super) fn plant_fact(journal: &Journal, position: i64, kind: &str, fact: serde_json::Value) {
     let envelope = wire::Envelope {
         v: WireVersion::CURRENT,
         seq: seq(u64::try_from(position).unwrap()),

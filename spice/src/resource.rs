@@ -61,7 +61,7 @@ spice://task/HANDLE/artifacts  task artifact list HANDLE [?limit=N&max-bytes=N&a
 spice://task/HANDLE/artifact/ARTIFACT  task artifact show HANDLE ARTIFACT [?offset=N&bytes=N]
 spice://task/HANDLE/room  room history HANDLE [?contributions&limit=N&max-bytes=N&after=PUBLICATION]; contributions pages only typed contributions; every page groups its contributions by kind; reading joins and acknowledges nothing
 spice://task/HANDLE/room/relevance  room relevance HANDLE [?limit=N&max-bytes=N&after=OBSERVATION]; shadow observations, assessments, and whole-room metrics; reading changes nothing
-spice://task/HANDLE/room/awareness  room awareness HANDLE [?shadows&limit=N&max-bytes=N&after=POSITION]; lanes told about this Design, matched terms, and bounded advisory maturity; shadows pages instead the sessions whose best Design was this one but fell short of its floor, with what each lane later did; reading changes nothing
+spice://task/HANDLE/room/awareness  room awareness HANDLE [?limit=N&max-bytes=N&after=POSITION]; lanes told about this Design, matched terms, and bounded advisory maturity; reading changes nothing
 spice://task/HANDLE/design  design show HANDLE [?limit=N&max-bytes=N&after=POSITION]; reading changes nothing
 spice://room/inbox  room inbox [?limit=N&max-bytes=N&after=ITEM]; open operator items with publication text and receipt state; reading settles nothing
 spice://inbox  inbox [?limit=N&max-bytes=N&max-text=N&after=ID]; reading acknowledges nothing
@@ -266,16 +266,6 @@ const ROOM: &[Key] = &[
     once("max-bytes"),
     once("after"),
 ];
-/// An awareness page, optionally its shadows instead of its notices.
-const AWARENESS: &[Key] = &[
-    Key {
-        name: "shadows",
-        arity: Arity::Flag,
-    },
-    once("limit"),
-    once("max-bytes"),
-    once("after"),
-];
 const GRAPH: &[Key] = &[
     Key {
         name: "all",
@@ -362,10 +352,10 @@ impl Shape {
             Self::Ledger { .. } => LEDGER,
             Self::Artifacts { .. }
             | Self::RoomRelevance { .. }
+            | Self::RoomAwareness { .. }
             | Self::Design { .. }
             | Self::Lanes
             | Self::RoomInbox => ROWS,
-            Self::RoomAwareness { .. } => AWARENESS,
             Self::Room { .. } => ROOM,
             Self::Artifact { .. } => ARTIFACT_SHOW,
             Self::Session(Session::Briefing) => BRIEFING,

@@ -16,6 +16,7 @@ mod design_admission;
 mod design_asks;
 mod design_invitations;
 mod design_reach;
+mod design_shadows;
 mod designs;
 mod fact_bounds;
 mod hidden_projects;
@@ -110,7 +111,8 @@ const PREPARED: &str = "prepared";
 /// retained item-bearing contribution takes its item's text identity,
 /// every retained room coordination record, direction head, and coordination
 /// receipt loses its retired automated-resume rule, every retained
-/// single-ask Design invitation takes its one-element ask list, and every
+/// single-ask Design invitation takes its one-element ask list, every
+/// retained Design shadow retires into inert historical authority, and every
 /// retained leave answer loses its retired repeat-leave flag.
 const OLDEST_PREDECESSOR_SCHEMA: u32 = 33;
 
@@ -172,11 +174,9 @@ pub(crate) const OOPS_GENERATION_SCHEMA: u32 = 77;
 pub(crate) const STEERING_ROOM_SCHEMA: u32 = 86;
 /// First schema whose baseline carries the release-note projection.
 pub(crate) const RELEASE_NOTES_SCHEMA: u32 = 88;
-/// First schema whose baseline indexes Design shadow records per Design.
-pub(crate) const DESIGN_SHADOW_SCHEMA: u32 = 102;
 /// Each room projection beside the first schema whose baseline carries it, in
 /// creation order.
-const ROOM_SCHEMA_STEPS: [(u32, &str); 10] = [
+const ROOM_SCHEMA_STEPS: [(u32, &str); 9] = [
     (ROOM_AUTHORITY_SCHEMA, crate::rooms::SCHEMA_SQL),
     (ROOM_CURSOR_SCHEMA, crate::rooms::CURSOR_SCHEMA_SQL),
     (ROOM_HORIZON_SCHEMA, crate::rooms::HORIZON_SCHEMA_SQL),
@@ -192,7 +192,6 @@ const ROOM_SCHEMA_STEPS: [(u32, &str); 10] = [
         OOPS_GENERATION_SCHEMA,
         crate::rooms::OOPS_GENERATION_SCHEMA_SQL,
     ),
-    (DESIGN_SHADOW_SCHEMA, crate::rooms::SHADOW_SCHEMA_SQL),
 ];
 const RETIRED_GATE_FILED_KIND: &str = "gate::filed";
 const RETIRED_GATE_FILED_RELEASE: &str = "595da8d81";
@@ -418,6 +417,7 @@ fn cross_current_rows(
 /// later crossing decodes a retained row strictly.
 fn strip_retired_members(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
     room_coordination::cross(transaction)?;
+    design_shadows::cross(transaction)?;
     preparation_edges::strip_authorization(transaction)?;
     task_evidence::cross(transaction)?;
     contribution_charges::cross(transaction)?;

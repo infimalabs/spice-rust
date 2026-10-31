@@ -172,25 +172,6 @@ owns each rule summarized here.
   shows its transcript locus once. The browser places the score beside the
   reach on the asked-lane chip and retains the complete admission, including
   an unscored record's release, in its accessible title.
-- **Design shadows.** When a session's best Design at an opportunity shares a
-  term with its cards yet falls short of its reach floor, and the session owes
-  no request and was never asked about that Design, Spice records one
-  `room::shadowed` fact instead of a notice. The shadow is positional: the
-  single best candidate that did not clear, with no band or threshold of its
-  own, so any floor change in any release is reflected automatically. A
-  statement-edit opportunity shadows its one Design only when that Design is
-  also the session's best among every Design it could be asked about. The
-  record names the Design statement, lane, occupant, session, opportunity,
-  evidence card and digest, the reach and the floor in force, the exact score,
-  the frequency fit generation, and the strongest overlaps, so a later reader
-  can judge whether the floor was right at the time. One shadow per session per
-  Design statement revision; a second opportunity on the same revision records
-  nothing, so volume is bounded by seated sessions and never by opportunities.
-  A shadow delivers nothing, wakes nothing, grants nothing, and creates no
-  listening; `spice room history` and default `spice room awareness` never
-  show it. `spice room awareness HANDLE --shadows` pages a Design's shadows in
-  journal order and resolves, for each, the first thing that lane later did on
-  the Design: contributed, left, captured its claim, or none.
 - **Design maturity.** One bounded projection per Design folds admitted
   requests and typed contributions in journal order. It reports contribution
   and contributing-lane totals, requested reach, same-statement

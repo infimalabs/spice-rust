@@ -20,7 +20,7 @@ use crate::{MigrationError, OpenError};
 /// Last release whose decoders admitted room coordination.
 const RELEASE: &str = "54e357267";
 
-struct RetiredRow {
+pub(super) struct RetiredRow {
     seq: i64,
     wire_version: i64,
     instant: String,
@@ -57,7 +57,7 @@ fn retire_facts(transaction: &rusqlite::Transaction<'_>) -> Result<BTreeSet<i64>
             positions.insert(wire::SequenceCode::new(seq).to_string());
         }
         retired.insert(row.seq);
-        retire_row(transaction, row)?;
+        retire_row(transaction, row, RELEASE, retained_fact_error)?;
     }
     if positions.is_empty() {
         return Ok(retired);
@@ -79,13 +79,15 @@ fn retire_facts(transaction: &rusqlite::Transaction<'_>) -> Result<BTreeSet<i64>
             });
         if through.is_some_and(|through| positions.contains(&through)) {
             retired.insert(row.seq);
-            retire_row(transaction, row)?;
+            retire_row(transaction, row, RELEASE, retained_fact_error)?;
         }
     }
     Ok(retired)
 }
 
-fn read_rows(
+/// Each `fact_envelopes` row `select` names, as `seq, wire_version, instant,
+/// actor, origin, cause, envelope, kind`.
+pub(super) fn read_rows(
     transaction: &rusqlite::Transaction<'_>,
     select: &str,
 ) -> Result<Vec<RetiredRow>, OpenError> {
@@ -109,7 +111,15 @@ fn read_rows(
     Ok(rows)
 }
 
-fn retire_row(transaction: &rusqlite::Transaction<'_>, row: RetiredRow) -> Result<(), OpenError> {
+/// Replace one retired row in place with inert [`wire::body::JournalRetained`]
+/// evidence naming `release`, the last release whose decoders admitted it,
+/// after proving its envelope agrees with its indexed columns.
+pub(super) fn retire_row(
+    transaction: &rusqlite::Transaction<'_>,
+    row: RetiredRow,
+    release: &str,
+    retained_fact_error: fn(i64, String) -> OpenError,
+) -> Result<(), OpenError> {
     let envelope: wire::Envelope<serde_json::Value> = serde_json::from_slice(&row.envelope)
         .map_err(|error| {
             retained_fact_error(
@@ -132,7 +142,7 @@ fn retire_row(transaction: &rusqlite::Transaction<'_>, row: RetiredRow) -> Resul
         ));
     }
     let encoded = wire::encode(&wire::Fact::new(wire::body::JournalRetained {
-        release: RELEASE.to_owned(),
+        release: release.to_owned(),
         fact: envelope.fact,
     }))
     .map_err(|error| {

@@ -293,35 +293,10 @@ pub struct ProfileMatch<'p, 'a, K, T> {
     pub digest: Digest,
     /// The winning card's bounded authored excerpt.
     pub excerpt: &'p str,
-    /// The winning cosine.
+    /// The winning cosine, at least that Design candidate's floor.
     pub score: f64,
-    /// The selected Design candidate's floor.
-    pub floor: f64,
     /// The strongest shared terms, sorted.
     pub terms: Vec<String>,
-}
-
-/// What one selection found among its candidates.
-#[derive(Debug, PartialEq)]
-pub enum ProfileSelection<'p, 'a, K, T> {
-    /// The best Design that cleared its own floor.
-    Admitted(ProfileMatch<'p, 'a, K, T>),
-    /// No Design cleared its floor; the best-scoring one that shared any term
-    /// and fell short.
-    Short(ProfileMatch<'p, 'a, K, T>),
-    /// No card view shared a term with any candidate that cleared or fell short.
-    None,
-}
-
-impl<'p, 'a, K, T> ProfileSelection<'p, 'a, K, T> {
-    /// The admitted match, if one cleared its floor.
-    #[must_use]
-    pub fn admitted(self) -> Option<ProfileMatch<'p, 'a, K, T>> {
-        match self {
-            Self::Admitted(matched) => Some(matched),
-            Self::Short(_) | Self::None => None,
-        }
-    }
 }
 
 /// One session's retained evidence, stored oldest first, with derived vectors
@@ -428,8 +403,12 @@ impl<K> EvidenceProfile<K> {
         true
     }
 
-    /// The Design this profile is most relevant to under `frequency`, when
-    /// one clears its floor.
+    /// The Design this profile is most relevant to under `frequency`.
+    ///
+    /// A Design's relevance is the maximum cosine over every view of every
+    /// card; each Design qualifies against its candidate-owned floor. Ties
+    /// prefer the lower Design identity, then the newer card, then the earlier
+    /// view, so the same profile and candidates always select the same match.
     ///
     /// # Errors
     ///
@@ -440,35 +419,11 @@ impl<K> EvidenceProfile<K> {
         frequency: &FrequencyProfile,
         candidates: impl IntoIterator<Item = DesignCandidate<'a, T>>,
     ) -> Result<Option<ProfileMatch<'p, 'a, K, T>>, GenerationMismatch> {
-        self.select_or_short(frequency, candidates)
-            .map(ProfileSelection::admitted)
-    }
-
-    /// The Design this profile is most relevant to under `frequency`, or the
-    /// best one that fell short when none clears its floor.
-    ///
-    /// A Design's relevance is the maximum cosine over every view of every
-    /// card; each Design qualifies against its candidate-owned floor. Ties
-    /// prefer the lower Design identity, then the newer card, then the earlier
-    /// view, so the same profile and candidates always select the same match.
-    /// The shortfall is ranked the same way among the candidates that did not
-    /// clear, and is reported only when no candidate did.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a candidate vector weighted under a generation other than
-    /// `frequency`'s.
-    pub fn select_or_short<'p, 'a, T>(
-        &'p mut self,
-        frequency: &FrequencyProfile,
-        candidates: impl IntoIterator<Item = DesignCandidate<'a, T>>,
-    ) -> Result<ProfileSelection<'p, 'a, K, T>, GenerationMismatch> {
         let generation = frequency.generation();
         for card in &mut self.cards {
             card.prepare(frequency);
         }
-        let mut admitted: Option<Best<'a, T>> = None;
-        let mut short: Option<Best<'a, T>> = None;
+        let mut best: Option<Best<'a, T>> = None;
         for candidate in candidates {
             if candidate.vector.generation() != generation {
                 return Err(GenerationMismatch {
@@ -488,7 +443,7 @@ impl<K> EvidenceProfile<K> {
                         continue;
                     };
                     let score = candidate.vector.cosine(vector)?;
-                    if !score.is_finite() {
+                    if !score.is_finite() || score < candidate.score_floor {
                         continue;
                     }
                     let found = Best {
@@ -496,27 +451,17 @@ impl<K> EvidenceProfile<K> {
                         design: candidate.value,
                         vector: candidate.vector,
                         score,
-                        floor: candidate.score_floor,
                         card: card_index,
                         view: view_index,
                     };
-                    let best = if score >= candidate.score_floor {
-                        &mut admitted
-                    } else if score > 0.0 {
-                        &mut short
-                    } else {
-                        continue;
-                    };
                     if best.as_ref().is_none_or(|known| found.outranks(known)) {
-                        *best = Some(found);
+                        best = Some(found);
                     }
                 }
             }
         }
-        let (best, admitted) = match (admitted, short) {
-            (Some(best), _) => (best, true),
-            (None, Some(best)) => (best, false),
-            (None, None) => return Ok(ProfileSelection::None),
+        let Some(best) = best else {
+            return Ok(None);
         };
         let card = &self.cards[best.card];
         let (_, vectors) = card
@@ -526,21 +471,15 @@ impl<K> EvidenceProfile<K> {
         let vector = vectors[best.view]
             .as_ref()
             .expect("the winning view has a vector");
-        let matched = ProfileMatch {
+        Ok(Some(ProfileMatch {
             design: best.design,
             evidence: &card.evidence.key,
             view: card.evidence.views[best.view].0,
             digest: card.evidence.digest,
             excerpt: &card.evidence.excerpt,
             score: best.score,
-            floor: best.floor,
             terms: best.vector.explanation(vector),
-        };
-        Ok(if admitted {
-            ProfileSelection::Admitted(matched)
-        } else {
-            ProfileSelection::Short(matched)
-        })
+        }))
     }
 
     /// The strongest finite cosine between `vector` and any view of any
@@ -637,7 +576,6 @@ struct Best<'a, T> {
     design: &'a T,
     vector: &'a Prepared,
     score: f64,
-    floor: f64,
     card: usize,
     view: usize,
 }

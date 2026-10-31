@@ -2,7 +2,7 @@
 //! strictly better match, and released by substantive room publication, source
 //! replacement, or a Design statement change.
 
-use wire::rooms::{DesignAdmission, DesignNoticed, DesignReach, DesignShadowed};
+use wire::rooms::{DesignAdmission, DesignNoticed, DesignReach};
 
 use super::*;
 
@@ -15,8 +15,6 @@ const TASK_DESCRIPTION: &str = "Bound the cursor of retained publications per la
 mod items;
 #[path = "design_awareness/replacement.rs"]
 mod replacement;
-#[path = "design_awareness/shadows.rs"]
-mod shadows;
 
 /// Resident seats for each `(lane, occupant)`.
 fn seats(occupants: &[(u8, CanonicalUuid)]) -> Seats {
@@ -64,16 +62,6 @@ impl Lanes {
             .facts()
             .iter()
             .filter_map(|envelope| envelope.fact.read::<DesignNoticed>())
-            .collect()
-    }
-
-    fn shadowed(&self) -> Vec<DesignShadowed> {
-        self.bus
-            .fact_snapshot()
-            .expect("facts read")
-            .facts()
-            .iter()
-            .filter_map(|envelope| envelope.fact.read::<DesignShadowed>())
             .collect()
     }
 

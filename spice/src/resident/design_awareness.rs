@@ -13,16 +13,13 @@ use board::similarity::{
 };
 use journal::{GuardError, JournalRead};
 use spice::rooms::awareness::request_questions;
-use spice::rooms::evidence::{
-    DesignCandidate, Digest as ProfileDigest, ProfileMatch, ProfileSelection,
-};
+use spice::rooms::evidence::{DesignCandidate, Digest as ProfileDigest, ProfileMatch};
 use spice::rooms::profile::{EvidenceKey, ProfileOpportunity, ProfileOpportunityKind};
 use wire::body::TaskDone as CompletedTask;
 use wire::rooms::{
-    DesignAdmission, DesignAsk, DesignConversationEvidence, DesignFitGeneration, DesignItemSeries,
-    DesignItems, DesignNoticeEvidence, DesignNoticeMatch, DesignNoticeOpportunity, DesignNoticed,
-    DesignReach, DesignSession, DesignSimilarity, DesignSupport, RoomContributed, RoomLeft,
-    RoomQuestionItem,
+    DesignAdmission, DesignAsk, DesignConversationEvidence, DesignItemSeries, DesignItems,
+    DesignNoticeEvidence, DesignNoticeMatch, DesignNoticeOpportunity, DesignNoticed, DesignReach,
+    DesignSession, DesignSupport, RoomContributed, RoomLeft, RoomQuestionItem,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, Domain, Producer, Seq, SequenceCode, TaskStamp,
@@ -31,10 +28,6 @@ use wire::{
 
 use super::room_catch_up::Planning;
 use super::*;
-
-mod shadow;
-
-use shadow::{PlannedShadow, Shadow, record_shadow};
 
 /// Refusal reason of a request a commit after its observation made stale.
 const STALE: &str = "room::awareness-stale";
@@ -94,11 +87,11 @@ struct PlannedRequest {
     horizon: Option<Seq>,
 }
 
-/// What one planning pass found for every retained-profile opportunity.
+/// The requests one planning pass found for every retained-profile
+/// opportunity.
 #[derive(Default)]
 struct Planned {
     requests: Vec<PlannedRequest>,
-    shadows: Vec<PlannedShadow>,
 }
 
 /// One newly observed task completion and its matching input.
@@ -191,10 +184,9 @@ impl CompletionCursor {
 
 /// Record one best matching open Design for every retained-profile
 /// opportunity, replacing a session's owed request only with a strictly better
-/// match, and one shadow for every opportunity whose best Design fell short.
-/// Nothing is pushed into a lane's turn here: room catch-up carries the
+/// match. Nothing is pushed into a lane's turn here: room catch-up carries the
 /// owed request into the lane's next model input, and `task next` shows it
-/// while the lane holds no claim. A shadow reaches no lane at all.
+/// while the lane holds no claim.
 pub(in crate::resident) fn reconcile(
     bus: &Bus,
     seats: &Seats,
@@ -226,25 +218,6 @@ pub(in crate::resident) fn reconcile(
                     diagnostic,
                     "lane {} request for Design {} was not recorded: {error:?}",
                     request.lane, request.design
-                );
-            }
-        }
-    }
-    for shadow in planned.shadows {
-        match record_shadow(bus, &shadow) {
-            Ok(None) => {}
-            Ok(Some(stale)) => {
-                let _ = writeln!(
-                    diagnostic,
-                    "lane {} shadow for Design {} became stale: {stale}",
-                    shadow.lane, shadow.design
-                );
-            }
-            Err(error) => {
-                let _ = writeln!(
-                    diagnostic,
-                    "lane {} shadow for Design {} was not recorded: {error:?}",
-                    shadow.lane, shadow.design
                 );
             }
         }
@@ -343,7 +316,6 @@ fn plan_profile_requests(
     };
 
     let mut planned_sessions = BTreeSet::new();
-    let mut planned_shadows = BTreeSet::new();
     let mut planned = Planned::default();
     for opportunity in opportunities {
         let lane = opportunity.session.lane;
@@ -375,7 +347,7 @@ fn plan_profile_requests(
         let Some(durable_opportunity) = durable_opportunity(&opportunity, facts, occupant) else {
             continue;
         };
-        let selected = {
+        let selection = {
             let Some(profile) = state.profiles.profile_mut(&opportunity.session) else {
                 continue;
             };
@@ -389,29 +361,8 @@ fn plan_profile_requests(
                 owed.as_ref(),
             )?
         };
-        let selection = match selected {
-            Selected::Request(selection) => selection,
-            Selected::Shadow(shadow) => {
-                let shadow_identity = (session_identity, shadow.design.clone(), shadow.statement);
-                if facts.design_was_shadowed_in_session(
-                    lane,
-                    &session,
-                    &shadow.design,
-                    shadow.statement,
-                ) || !planned_shadows.insert(shadow_identity)
-                {
-                    continue;
-                }
-                planned.shadows.push(shadow.planned(
-                    lane,
-                    occupant,
-                    session,
-                    durable_opportunity,
-                    planning.horizon,
-                ));
-                continue;
-            }
-            Selected::None => continue,
+        let Some(selection) = selection else {
+            continue;
         };
         planned_sessions.insert(session_identity);
         planned.requests.push(selection.planned(
@@ -490,25 +441,12 @@ impl Selection {
     }
 }
 
-/// What one opportunity selected for a session.
-enum Selected {
-    /// A Design cleared its floor and is owed to the session.
-    Request(Selection),
-    /// No Design cleared its floor; the best one that fell short, for a
-    /// session that owes nothing and was never asked about it.
-    Shadow(Shadow),
-    /// Nothing to record.
-    None,
-}
-
 /// The best Design `kind` admits that still owes this session an ask, unless
 /// it fails to strictly outrank the Design still owed to the session under the
 /// same frequency generation, current cards, and reach floors. An owed Design
 /// that no longer clears its floor bars nothing. Whether a Design is selected
 /// is judged on its whole statement; the selection then asks every pending
-/// item, the one scoring best against the cards first. When no Design clears
-/// its floor and none is owed, the best that fell short is the session's
-/// shadow unless it was already asked about that Design.
+/// item, the one scoring best against the cards first.
 fn select_design(
     scoring: &Scoring<'_>,
     profile: &mut spice::rooms::profile::SessionProfile,
@@ -516,7 +454,7 @@ fn select_design(
     session: &DesignSession,
     kind: &ProfileOpportunityKind,
     owed: Option<&TaskStamp>,
-) -> CommandResult<Selected> {
+) -> CommandResult<Option<Selection>> {
     let Scoring {
         facts,
         frequency,
@@ -543,76 +481,27 @@ fn select_design(
             .map(|matched| matched.score),
         None => None,
     };
-    let askable = |(design, _): &&(&board::Entry, Arc<Prepared>)| {
-        pending_asks(facts, lane, session, design).is_some()
-    };
     let candidates = prepared
         .iter()
         .filter(|(design, _)| opportunity_design_matches(kind, design))
-        .filter(askable)
+        .filter(|(design, _)| pending_asks(facts, lane, session, design).is_some())
         .map(candidate);
-    let matched = match profile
+    let Some(matched) = profile
         .evidence_mut()
-        .select_or_short(frequency, candidates)
+        .select(frequency, candidates)
         .map_err(mismatch)?
-    {
-        ProfileSelection::Admitted(matched) => matched,
-        ProfileSelection::Short(short) => {
-            if owed.is_some() {
-                return Ok(Selected::None);
-            }
-            // A statement opportunity evaluates one Design; its shortfall is
-            // a shadow only when that Design is also the session's best among
-            // every Design it could be asked about.
-            let short = if matches!(kind, ProfileOpportunityKind::DesignChanged { .. }) {
-                let design = short.design.born().clone();
-                drop(short);
-                let every = prepared.iter().filter(askable).map(candidate);
-                match profile
-                    .evidence_mut()
-                    .select_or_short(frequency, every)
-                    .map_err(mismatch)?
-                {
-                    ProfileSelection::Short(best) if *best.design.born() == design => best,
-                    ProfileSelection::Admitted(_)
-                    | ProfileSelection::Short(_)
-                    | ProfileSelection::None => return Ok(Selected::None),
-                }
-            } else {
-                short
-            };
-            let design: &board::Entry = short.design;
-            if facts.design_was_noticed_in_session(lane, session, design.born()) {
-                return Ok(Selected::None);
-            }
-            let (Some(floor), Some(score)) = (
-                DesignSimilarity::new(short.floor),
-                DesignSimilarity::new(short.score),
-            ) else {
-                return Ok(Selected::None);
-            };
-            return Ok(Selected::Shadow(Shadow {
-                design: design.born().clone(),
-                statement: design.statement().revision,
-                evidence: durable_evidence(short.evidence, short.digest),
-                terms: short.terms,
-                reach: admitting_reach(facts, design),
-                floor,
-                score,
-                generation: DesignFitGeneration::from_bytes(frequency.generation().into_bytes()),
-            }));
-        }
-        ProfileSelection::None => return Ok(Selected::None),
+    else {
+        return Ok(None);
     };
     if bar.is_some_and(|bar| matched.score <= bar) {
-        return Ok(Selected::None);
+        return Ok(None);
     }
     let design: &board::Entry = matched.design;
     let mut selection = admitted(facts, frequency, matched)?;
     let asks = pending_asks(facts, lane, session, design).unwrap_or_default();
     let floor = match_score_floor(selection.matching.reach());
     selection.asks = rank_asks(profile, frequency, design, asks, floor).map_err(mismatch)?;
-    Ok(Selected::Request(selection))
+    Ok(Some(selection))
 }
 
 /// The selection one admitted match makes, scored under the reach its Design
