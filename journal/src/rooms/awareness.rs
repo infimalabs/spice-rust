@@ -3,8 +3,8 @@
 
 use rusqlite::{Connection, OptionalExtension};
 use wire::rooms::{
-    DESIGN_NOTICE_TERMS, DesignNoticeEvidence, DesignNoticeOpportunity, DesignNoticed,
-    DesignReturnDelivered, PreparationDecision, ProposalRef,
+    DESIGN_NOTICE_TERMS, DesignAdmission, DesignNoticeEvidence, DesignNoticeOpportunity,
+    DesignNoticed, DesignReach, DesignReturnDelivered, PreparationDecision, ProposalRef,
 };
 use wire::{Actor, AnyFact, ClaimDisposition, ClaimHead, Seq};
 
@@ -187,7 +187,8 @@ fn notice(
 }
 
 /// Refuse a notice whose matched terms are not one bounded ascending set of
-/// distinct lowercase words, or that asks about a concurred item.
+/// distinct lowercase words, that asks about a concurred item, or whose item
+/// admission does not ask exactly one quiet item.
 fn terms_and_ask(body: &DesignNoticed) -> Result<(), Refusal> {
     let terms_valid = !body.terms.is_empty() && body.terms.len() <= DESIGN_NOTICE_TERMS;
     if !terms_valid {
@@ -214,6 +215,22 @@ fn terms_and_ask(body: &DesignNoticed) -> Result<(), Refusal> {
     {
         return unsound(format!(
             "design awareness for {} asks about a concurred question item",
+            body.design
+        ));
+    }
+    let item_admitted = match &body.admission {
+        DesignAdmission::Scored(matching) => matching.reach() == DesignReach::Item,
+        DesignAdmission::Unscored { reach, .. } => *reach == DesignReach::Item,
+        DesignAdmission::Unreached { .. } => false,
+    };
+    let one_quiet = matches!(
+        body.asks.as_slice(),
+        [ask] if ask.state == wire::rooms::DesignItemState::Quiet
+    );
+    if item_admitted && !one_quiet {
+        return unsound(format!(
+            "design awareness for {} admits one question item without asking exactly one quiet \
+             item",
             body.design
         ));
     }

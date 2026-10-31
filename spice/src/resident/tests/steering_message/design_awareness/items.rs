@@ -2,7 +2,8 @@
 //! scoring best against the session's evidence first and the rest in
 //! statement order; the lane's own answer to any of them, or its leave,
 //! settles the request for the session, and a later session is owed only the
-//! items the lane has not weighed.
+//! items the lane has not weighed. When no whole Design clears its floor, one
+//! quiet item clearing the item floor admits a request asking only that item.
 
 use wire::rooms::{DesignItemState, RoomQuestionItem};
 
@@ -237,6 +238,154 @@ fn every_item_concurring_owes_no_whole_design_ask() {
         "a Design whose every item concurs has nothing left for an outside lane to weigh"
     );
     assert!(lanes.noticed().is_empty());
+    seated.release_all();
+    lanes.finish();
+}
+
+/// A Design whose long statement, about something else, dilutes any one item
+/// below the wide floor. Each `stamp` gets its own wording so no two Designs
+/// share the vocabulary that dilutes them.
+fn diluted_design(lanes: &Lanes, stamp: &str, questions: &[&str]) -> wire::TaskHandle {
+    const ONSETS: [&str; 20] = [
+        "zor", "vex", "glim", "quar", "tund", "brak", "flin", "morv", "sild", "thra", "welk",
+        "yarm", "drel", "kosp", "nurf", "plok", "gusk", "hond", "jilt", "lumb",
+    ];
+    let prefix = stamp.chars().last().expect("fixture stamp");
+    let mut statement = String::new();
+    for first in ONSETS {
+        for second in ONSETS {
+            statement.push_str(&format!("{prefix}{first}{second} "));
+        }
+    }
+    lanes.design_with_questions(stamp, "Hum zebras to sleep", &statement, questions)
+}
+
+/// Complete one task under `FIRST` matching the lane's retained work and
+/// reconcile the session profiles.
+fn complete_matching(
+    lanes: &Lanes,
+    stamp: &str,
+    seated: &Seats,
+    completions: &mut crate::resident::design_awareness::CompletionCursor,
+    profiles: &std::sync::Mutex<crate::resident::message_surface::MessageState>,
+) {
+    let task = lanes.claimed(stamp, FIRST);
+    lanes.complete(&task, &format!("{MATCHING} Completed as {stamp}."));
+    lanes.reconcile_profiles(seated, completions, profiles);
+}
+
+#[test]
+fn a_quiet_item_admits_a_request_asking_only_it_once_per_session() {
+    let lanes = Lanes::new("design-request-item-admission");
+    align_completion_lane(&lanes);
+    let config = surface(&lanes);
+    let design = diluted_design(&lanes, "dVrD245Kd", &[UNRELATED[0], RELEVANT, UNRELATED[1]]);
+    let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    let mut seated = claimant_seats();
+    let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
+
+    complete_matching(&lanes, "dVrD245Kc", &seated, &mut completions, &profiles);
+    let notices = lanes.noticed();
+    assert_eq!(notices.len(), 1, "one quiet item admits one request");
+    let DesignAdmission::Scored(matching) = &notices[0].admission else {
+        panic!("item admission is scored: {:?}", notices[0].admission);
+    };
+    assert_eq!(matching.reach(), DesignReach::Item);
+    assert_eq!(matching.floor(), board::similarity::ITEM_MATCH_FLOOR);
+    assert!(matching.score() >= matching.floor(), "{}", matching.score());
+    assert_eq!(
+        notices[0]
+            .asks
+            .iter()
+            .map(|ask| (ask.item.clone(), ask.state))
+            .collect::<Vec<_>>(),
+        [(RoomQuestionItem::of(RELEVANT), DesignItemState::Quiet)],
+        "the request asks only the item that matched"
+    );
+    let text = spice::rooms::awareness::request_text(
+        &lanes
+            .request(&config, FIRST)
+            .expect("the item request is owed"),
+    );
+    assert_eq!(text.matches(RELEVANT).count(), 1, "{text}");
+    for unasked in [UNRELATED[0], UNRELATED[1]] {
+        assert!(!text.contains(unasked), "{text}");
+    }
+
+    lanes.leave(50, FIRST, &design);
+    assert_eq!(lanes.request(&config, FIRST), None);
+    complete_matching(&lanes, "dVrD245Kp", &seated, &mut completions, &profiles);
+    assert_eq!(
+        lanes.noticed().len(),
+        1,
+        "an item asked and answered in the session is not admitted again"
+    );
+    seated.release_all();
+    lanes.finish();
+}
+
+/// Complete one task matching the lane's work and report whether any request
+/// was recorded.
+fn admits_any(lanes: &Lanes) -> bool {
+    let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    let mut seated = claimant_seats();
+    let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
+    complete_matching(lanes, "dVrD245Kc", &seated, &mut completions, &profiles);
+    seated.release_all();
+    !lanes.noticed().is_empty()
+}
+
+#[test]
+fn a_quiet_item_below_the_item_floor_admits_nothing() {
+    let lanes = Lanes::new("design-request-item-below");
+    align_completion_lane(&lanes);
+    diluted_design(&lanes, "dVrD245Kd", &UNRELATED);
+    assert!(!admits_any(&lanes));
+    lanes.finish();
+}
+
+#[test]
+fn an_unopposed_contested_or_concurred_item_never_admits_by_itself() {
+    let lanes = Lanes::new("design-request-item-heard");
+    lanes.seat(THIRD);
+    align_completion_lane(&lanes);
+    let unopposed = diluted_design(&lanes, "dVrD245Km", &[RELEVANT]);
+    let contested = diluted_design(&lanes, "dVrD245Kn", &[RELEVANT]);
+    let concurred = diluted_design(&lanes, "dVrD245Kg", &[RELEVANT]);
+    lanes.charge(50, SECOND, &unopposed, 1, 1);
+    lanes.charge(51, SECOND, &contested, 1, 1);
+    lanes.charge(52, THIRD, &contested, 1, -1);
+    for (id, lane) in [(53, SENDER), (54, SECOND), (55, THIRD)] {
+        lanes.charge(id, lane, &concurred, 1, 1);
+    }
+    assert!(!admits_any(&lanes));
+    lanes.finish();
+}
+
+#[test]
+fn a_design_clearing_its_own_floor_is_asked_instead_of_any_item() {
+    let lanes = Lanes::new("design-request-item-yields");
+    align_completion_lane(&lanes);
+    let whole = item_design(&lanes, &[RELEVANT]);
+    diluted_design(&lanes, "dVrD245Km", &[UNRELATED[0], RELEVANT]);
+    let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    let mut seated = claimant_seats();
+    let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
+
+    complete_matching(&lanes, "dVrD245Kc", &seated, &mut completions, &profiles);
+    let notices = lanes.noticed();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].design, stamp(&whole));
+    let DesignAdmission::Scored(matching) = &notices[0].admission else {
+        panic!(
+            "Design-level admission is scored: {:?}",
+            notices[0].admission
+        );
+    };
+    assert_eq!(matching.reach(), DesignReach::Wide);
     seated.release_all();
     lanes.finish();
 }

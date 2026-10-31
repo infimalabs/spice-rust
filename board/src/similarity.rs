@@ -42,6 +42,10 @@ pub const WIDE_MATCH_FLOOR: f64 = 0.08;
 /// Least cosine at which a narrow Design request, over steeped items, invites
 /// a lane.
 pub const NARROW_MATCH_FLOOR: f64 = 0.16;
+/// Least cosine at which one quiet question item, read with its Design's
+/// pitch, admits a request asking only that item when no whole Design invites
+/// the lane.
+pub const ITEM_MATCH_FLOOR: f64 = NARROW_MATCH_FLOOR;
 /// Least cosine at which two concurrently claimed statements warn of overlap.
 pub const CLAIM_OVERLAP_FLOOR: f64 = 0.25;
 /// Power on a term's normalized conversation rarity in its weight: a term in
