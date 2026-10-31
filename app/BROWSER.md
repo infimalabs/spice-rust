@@ -174,7 +174,8 @@ quotes.
 Every message Play and Quote action uses the shared message control size and
 the same open-edge pair docked at the card's inline end. Play, Quote, and code
 Copy use explicit SVG geometry on the same icon grid rather than font glyphs;
-message and image Quote share one shape. Provider failures lead
+message and image Quote share one shape, two rounded opening-quote marks.
+Provider failures lead
 their exact error text with the card's relative age and name, without prose
 punctuation rewriting. Other non-prose cards keep one attribution-and-action
 island in their card corner. A single-image cover places that same unframed
