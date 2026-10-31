@@ -340,8 +340,8 @@ fn ordinary_retained_pages_keep_decoded_bytes_within_the_aggregate_target() {
             fact(
                 position,
                 Some(cause),
-                FactKind::TaskNoted,
-                json!({"task": "1kKRRsDP", "note": "x".repeat(600_000)}),
+                FactKind::CanaryAlarmed,
+                text_body("x".repeat(600_000)),
             ),
         );
         journal
@@ -369,7 +369,7 @@ fn ordinary_retained_pages_keep_decoded_bytes_within_the_aggregate_target() {
     assert_bounded(&|| {
         journal.read(|read| {
             read.selected_fact_page(
-                &[FactKind::TaskNoted],
+                &[FactKind::CanaryAlarmed],
                 Some(seq(2)),
                 None,
                 FactReadBudget::RETAINED,
@@ -379,16 +379,16 @@ fn ordinary_retained_pages_keep_decoded_bytes_within_the_aggregate_target() {
     });
     assert_bounded(&|| {
         journal.read(|read| {
-            read.recent_fact_page(FactKind::TaskNoted, None, FactReadBudget::RETAINED)
+            read.recent_fact_page(FactKind::CanaryAlarmed, None, FactReadBudget::RETAINED)
                 .map(drop)
         })
     });
-    assert_bounded(&|| journal.read(|read| read.latest_fact(FactKind::TaskNoted).map(drop)));
+    assert_bounded(&|| journal.read(|read| read.latest_fact(FactKind::CanaryAlarmed).map(drop)));
     assert_bounded(&|| {
         journal.read(|read| {
             read.recent_origin_facts(
                 &"task:1kKRRsDP".parse().expect("fixture origin"),
-                FactKind::TaskNoted,
+                FactKind::CanaryAlarmed,
                 None,
                 fact_budget(2),
             )
@@ -413,8 +413,8 @@ fn recent_origin_facts_resume_after_a_byte_bounded_prefix_without_fault() {
             fact(
                 position,
                 None,
-                FactKind::TaskNoted,
-                json!({"task": "1kKRRsDP", "note": "x".repeat(600_000)}),
+                FactKind::CanaryAlarmed,
+                text_body("x".repeat(600_000)),
             ),
         );
     }
@@ -426,7 +426,9 @@ fn recent_origin_facts_resume_after_a_byte_bounded_prefix_without_fault() {
 
     reset_indexed_read_metrics();
     let first = journal
-        .read(|read| read.recent_origin_facts(&origin, FactKind::TaskNoted, None, fact_budget(2)))
+        .read(|read| {
+            read.recent_origin_facts(&origin, FactKind::CanaryAlarmed, None, fact_budget(2))
+        })
         .expect("first byte-bounded recent-origin page");
     assert_eq!(
         first.rows.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
@@ -440,7 +442,7 @@ fn recent_origin_facts_resume_after_a_byte_bounded_prefix_without_fault() {
         .read(|read| {
             read.recent_origin_facts(
                 &origin,
-                FactKind::TaskNoted,
+                FactKind::CanaryAlarmed,
                 first.continuation,
                 fact_budget(2),
             )

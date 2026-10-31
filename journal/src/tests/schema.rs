@@ -74,12 +74,14 @@ const ROOM_HORIZON_SCHEMAS: std::ops::RangeInclusive<u32> = 45..=103;
 
 /// Return a current fixture to a predecessor's shape and identity.
 pub(super) fn restore_predecessor(journal: &Journal, predecessor: u32) {
-    // Every predecessor's rooms held no retained task note.
+    // A predecessor before schema 76 indexed no retained task note.
     let rooms = if predecessor < crate::migrate::ROOM_AUTHORITY_SCHEMA {
         "DROP TABLE room_publications; DROP TABLE proposal_heads; DROP TABLE authorization_heads;"
-    } else {
+    } else if predecessor < crate::migrate::RETAINED_NOTES_SCHEMA {
         "DELETE FROM room_publications WHERE seq IN \
          (SELECT seq FROM fact_envelopes WHERE kind = 'task::noted');"
+    } else {
+        ""
     };
     let cursors = if predecessor < crate::migrate::ROOM_CURSOR_SCHEMA {
         "DROP TABLE room_cursors;"
@@ -185,6 +187,70 @@ pub(super) fn restore_predecessor(journal: &Journal, predecessor: u32) {
              PRAGMA user_version = {predecessor};",
         ))
         .expect("restore predecessor shape");
+}
+
+/// A `task::noted` envelope, a kind schema 106 last admitted: the operator
+/// noted `text` on `task` at `position`.
+fn retired_note(position: u64, task: &str, text: &str) -> wire::Envelope<serde_json::Value> {
+    wire::Envelope {
+        v: WireVersion::CURRENT,
+        seq: seq(position),
+        at: instant(),
+        actor: Actor::Operator,
+        origin: format!("task:{task}")
+            .parse::<Origin>()
+            .expect("fixture origin"),
+        cause: None,
+        fact: json!({"kind": "task::noted", "task": task, "note": text}),
+    }
+}
+
+/// Insert `envelope`, whose fact is a kind no current release writes, as the
+/// row a predecessor committed.
+fn plant_retired(journal: &Journal, envelope: &wire::Envelope<serde_json::Value>) {
+    journal
+        .connection
+        .execute(
+            "INSERT INTO fact_envelopes \
+             (seq, wire_version, instant, actor, origin, cause, kind, envelope) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                i64::try_from(envelope.seq.get()).expect("fixture seq fits SQLite"),
+                envelope.v.0,
+                envelope.at.to_string(),
+                envelope.actor.to_string(),
+                envelope.origin.as_str(),
+                envelope
+                    .cause
+                    .map(|cause| i64::try_from(cause.get()).expect("fixture cause fits SQLite")),
+                envelope.fact["kind"]
+                    .as_str()
+                    .expect("a fact names its kind"),
+                wire::encode(envelope).expect("planted fact encodes"),
+            ],
+        )
+        .expect("plant retired fact");
+}
+
+/// Plant `envelope` as a root, indexing its thread and advancing the cursor
+/// to it.
+fn plant_root(journal: &Journal, envelope: &wire::Envelope<serde_json::Value>) {
+    plant_retired(journal, envelope);
+    let position = envelope.seq.get();
+    journal
+        .connection
+        .execute_batch(&format!(
+            "UPDATE cursor_head SET seq = {position}, wake = {position} WHERE singleton = 1;
+             UPDATE steering_index SET indexed_seq = {position} WHERE singleton = 1;"
+        ))
+        .expect("advance past the planted fact");
+    journal
+        .connection
+        .execute(
+            "INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES (?1, ?2, NULL, ?1, 0)",
+            params![position as i64, envelope.origin.as_str()],
+        )
+        .expect("index planted fact");
 }
 
 #[test]

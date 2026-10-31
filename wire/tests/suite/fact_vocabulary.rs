@@ -30,7 +30,6 @@ const PINNED: &[(&str, &str)] = &[
     ("TaskDone", "task::done"),
     ("TaskReviewed", "task::reviewed"),
     ("TaskAssigned", "task::assigned"),
-    ("TaskNoted", "task::noted"),
     ("TaskDeferred", "task::deferred"),
     ("TaskWoken", "task::woken"),
     ("TaskFiled", "task::filed"),

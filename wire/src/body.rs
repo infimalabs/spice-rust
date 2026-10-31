@@ -696,8 +696,9 @@ pub struct TrustRevoked {
 /// current readers validate this marker but never decode that nested payload as
 /// an executable fact. The retained payloads current projections still read
 /// are a judge ruling from before provenance-complete judgments, see
-/// [`JournalRetained::taste_ruling`], and an operator Design nudge, see
-/// [`crate::rooms::RetainedNudge`].
+/// [`JournalRetained::taste_ruling`], a task note from before notes became
+/// room observations, see [`JournalRetained::task_note`], and an operator
+/// Design nudge, see [`crate::rooms::RetainedNudge`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JournalRetained {
@@ -729,6 +730,29 @@ impl JournalRetained {
             confirmed,
         })
     }
+
+    /// The task note this evidence retains, when it retains one.
+    ///
+    /// A `task::noted` fact appended free text to its task before notes became
+    /// room observations. A retained note that is no taste-review audit still
+    /// reads as an authored observation in its task's room, and every retained
+    /// note stays a historical change to its task.
+    #[must_use]
+    pub fn task_note(&self) -> Option<RetainedTaskNote> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            #[serde(rename = "kind")]
+            _kind: serde::de::IgnoredAny,
+            task: TaskStamp,
+            note: String,
+        }
+        if self.fact.get("kind")?.as_str()? != RetainedTaskNote::KIND {
+            return None;
+        }
+        let Wire { task, note, .. } = Wire::deserialize(&self.fact).ok()?;
+        Some(RetainedTaskNote { task, note })
+    }
 }
 
 /// A judge ruling retained from before provenance-complete judgments.
@@ -740,6 +764,26 @@ pub struct RetainedTasteRuling {
     pub locus: String,
     /// Whether the judge confirmed the taste rather than clearing it.
     pub confirmed: bool,
+}
+
+/// A task note retained from before notes became room observations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetainedTaskNote {
+    /// Annotated task.
+    pub task: TaskStamp,
+    /// Note text.
+    pub note: String,
+}
+
+impl RetainedTaskNote {
+    /// Kind the note carried before it crossed into retained evidence.
+    pub const KIND: &'static str = "task::noted";
+
+    /// The note `fact` retains, when it is retained evidence of one.
+    #[must_use]
+    pub fn read(fact: &crate::AnyFact) -> Option<Self> {
+        fact.as_body::<JournalRetained>()?.task_note()
+    }
 }
 
 /// The one forward schema migration finalized before epoch mint.

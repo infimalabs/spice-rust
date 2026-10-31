@@ -91,8 +91,10 @@
 /// inert evidence naming schema-104. Schema 106 retires Design pass critiques
 /// and coverage, whose proposal heads drop, and operator nudges, which still
 /// ready their Design from the retained evidence, as inert evidence naming
-/// schema-105.
-pub const SCHEMA_VERSION: u32 = 106;
+/// schema-105. Schema 107 retires task notes, which keep their room
+/// publications and their place in their task's generation history, as inert
+/// evidence naming schema-106.
+pub const SCHEMA_VERSION: u32 = 107;
 
 /// First position assigned by a newly created journal.
 ///

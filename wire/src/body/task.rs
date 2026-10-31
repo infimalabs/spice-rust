@@ -472,15 +472,6 @@ pub struct TaskAssigned {
     pub phase: Phase,
 }
 
-/// A durable task note appended.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskNoted {
-    /// Annotated task.
-    pub task: TaskStamp,
-    /// Note text.
-    pub note: String,
-}
-
 /// A task received a wakeable deferral.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskDeferred {

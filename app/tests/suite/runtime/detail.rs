@@ -55,7 +55,7 @@ fn detail_refusal(session: &Session, reason: &str) -> app::Admitted<Response<Tas
         .expect("detail refusal is admitted")
 }
 
-fn task_note_fact(task: &wire::TaskStamp, position: u64) -> serde_json::Value {
+fn task_wake_fact(task: &wire::TaskStamp, position: u64) -> serde_json::Value {
     serde_json::json!({
         "v": 1,
         "seq": position,
@@ -63,9 +63,8 @@ fn task_note_fact(task: &wire::TaskStamp, position: u64) -> serde_json::Value {
         "actor": "operator",
         "origin": format!("task:{task}"),
         "fact": {
-            "kind": "task::noted",
+            "kind": "task::woken",
             "task": task,
-            "note": "new evidence",
         },
     })
 }
@@ -126,7 +125,7 @@ fn task_fact_rereads_only_the_affected_shown_detail() {
         ),
     );
 
-    let frame = admitted_stream(&session, &fact_frame(task_note_fact(&affected, 45)));
+    let frame = admitted_stream(&session, &fact_frame(task_wake_fact(&affected, 45)));
     let stale = stale_reads(&frame);
     let tasks = stale.task_details().cloned().collect::<Vec<_>>();
     assert_eq!(tasks, vec![affected.clone()]);

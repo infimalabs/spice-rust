@@ -5,7 +5,7 @@ use super::claim_index::{add_claimed_task, query_plan};
 use super::*;
 
 use crate::{FactCause, JournalWrite};
-use wire::body::{ClaimFreed, TaskNoted};
+use wire::body::{ClaimFreed, TaskWoken};
 use wire::{Producer, TaskStamp};
 
 const HOLDER: &str = "018f82d4-6f59-7d06-92e3-bce913116360";
@@ -136,7 +136,7 @@ fn advances(journal: &Journal, task: &TaskStamp, after: u64, limit: usize) -> Ve
         .collect()
 }
 
-/// Commit `count` notes on `task` from `actor` in one transaction.
+/// Commit `count` wakes of `task` from `actor` in one transaction.
 fn note(
     journal: &mut Journal,
     actor: &Actor,
@@ -149,18 +149,12 @@ fn note(
         instant(),
         Producer::CommandDoor,
     );
-    for index in 0..count {
+    for _ in 0..count {
         write
-            .fact(
-                TaskNoted {
-                    task: task.clone(),
-                    note: format!("note {index}"),
-                },
-                FactCause::Root,
-            )
-            .expect("note fact builds");
+            .fact(TaskWoken { task: task.clone() }, FactCause::Root)
+            .expect("wake fact builds");
     }
-    journal.apply(write).expect("notes commit")
+    journal.apply(write).expect("wakes commit")
 }
 
 fn free(journal: &mut Journal, task: &TaskStamp) {

@@ -16,6 +16,7 @@ const RECEIPT: &str = "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 const SHUTDOWN_PREDECESSOR: u32 = 103;
 const WARNING_PREDECESSOR: u32 = 104;
 const PROPOSAL_EVIDENCE_PREDECESSOR: u32 = 105;
+const TASK_NOTE_PREDECESSOR: u32 = 106;
 
 fn shutdown_era_orphans() -> Vec<serde_json::Value> {
     vec![
@@ -348,5 +349,115 @@ fn retained_proposal_evidence_drops_its_heads_and_a_nudge_stays_room_authority()
     assert_eq!(nudges[0].0, seq(u64::try_from(last).unwrap()));
     assert_eq!(nudges[0].1.design, design);
     assert_eq!(nudges[0].1.recipient, Some(LANE.parse().unwrap()));
+    verify_and_reopen(journal, &path);
+}
+
+/// Rewrite the fact at `position` into the note `fact` a predecessor
+/// committed there instead, keeping the row's envelope metadata.
+fn respell(journal: &Journal, position: u64, fact: &serde_json::Value) {
+    let row = journal
+        .read(|read| {
+            read.fact_page(
+                crate::FactPageStart::At(seq(position)),
+                seq(position),
+                crate::FactReadBudget::RETAINED,
+            )
+        })
+        .unwrap()
+        .rows
+        .remove(0);
+    let envelope = wire::Envelope {
+        v: row.v,
+        seq: row.seq,
+        at: row.at,
+        actor: row.actor,
+        origin: row.origin,
+        cause: row.cause,
+        fact: fact.clone(),
+    };
+    journal
+        .connection
+        .execute(
+            "UPDATE fact_envelopes SET kind = ?2, envelope = ?3 WHERE seq = ?1",
+            params![
+                i64::try_from(position).unwrap(),
+                fact["kind"].as_str().unwrap(),
+                wire::encode(&envelope).unwrap(),
+            ],
+        )
+        .unwrap();
+}
+
+#[test]
+fn retained_task_notes_keep_their_room_publication_and_their_task_generation() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("task-notes.sqlite3");
+    let mut journal = authority_file_fixture(&path);
+    let task: wire::TaskStamp = "1kKRRsDP".parse().unwrap();
+    // A note was a change to its task: commit one, then spell it as a note.
+    let mut write = crate::JournalWrite::new(
+        Actor::Operator,
+        format!("task:{task}").parse().unwrap(),
+        instant(),
+        wire::Producer::CommandDoor,
+    );
+    write
+        .fact(
+            wire::body::TaskWoken { task: task.clone() },
+            crate::FactCause::Root,
+        )
+        .unwrap();
+    let noted = journal.apply(write).unwrap().last();
+    let orphans = vec![
+        json!({"kind": "task::noted", "task": task, "note": "an observation"}),
+        json!({"kind": "task::noted", "task": task,
+               "note": "taste-review audit policy=abc123 outcome=clear matches=[]"}),
+        json!({"kind": "task::noted", "task": "1kQwPZtK", "note": "no such task"}),
+    ];
+    respell(&journal, noted.get(), &orphans[0]);
+    let positions = plant_all(&journal, &orphans[1..]);
+    restore_predecessor(&journal, TASK_NOTE_PREDECESSOR);
+    let publication = wire::rooms::RoomAuthorityStamp::for_micros(
+        instant().get().as_microsecond() + i64::try_from(noted.get()).unwrap(),
+    )
+    .unwrap();
+    journal
+        .connection
+        .execute(
+            "INSERT INTO room_publications(room, publication, seq) VALUES (?1, ?2, ?3)",
+            params![
+                task.as_str(),
+                publication.to_string(),
+                i64::try_from(noted.get()).unwrap()
+            ],
+        )
+        .unwrap();
+    advance_cursor(&journal, *positions.last().unwrap());
+    drop(journal);
+
+    let journal = cross(&path, TASK_NOTE_PREDECESSOR, &orphans, "schema-106");
+    let room = task.as_str().parse().unwrap();
+    let shown = journal
+        .read(|read| read.room_publication(&room, &publication))
+        .unwrap()
+        .expect("the retained note stays its room's publication");
+    let published = shown.fact.read::<wire::rooms::RoomPublished>().unwrap();
+    assert_eq!(
+        (published.content, shown.seq, shown.actor),
+        (
+            wire::rooms::RoomPublicationContent::Authored {
+                text: "an observation".to_owned()
+            },
+            noted,
+            Actor::Operator
+        )
+    );
+    let advances = journal
+        .read(|read| read.task_generations_after(&task, 0, 8))
+        .unwrap()
+        .into_iter()
+        .map(|advance| (advance.generation, advance.position))
+        .collect::<Vec<_>>();
+    assert_eq!(advances, [(1, noted)], "the note stays its task's change");
     verify_and_reopen(journal, &path);
 }

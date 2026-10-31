@@ -281,8 +281,6 @@ vocabulary! {
     TaskReviewed = "task::reviewed" by CommandDoor;
     /// The allocator seated a reviewer under the anti-self-review witness.
     TaskAssigned = "task::assigned" by CommandDoor;
-    /// A durable task note appended.
-    TaskNoted = "task::noted" by CommandDoor;
     /// A task received a wakeable deferral.
     TaskDeferred = "task::deferred" by CommandDoor;
     /// A task's deferral cleared.
@@ -578,7 +576,6 @@ impl FactKind {
         match self {
             Self::TaskAdded => &[Origin, Dependency, Lifecycle],
             Self::ExecutionAuthorized => &[Dependency],
-            Self::TaskNoted => &[],
             Self::TaskPhased
             | Self::TaskDone
             | Self::TaskReviewed
@@ -802,7 +799,6 @@ impl AnyFact {
             Decoded::TaskDone(body) => (Some(&body.task), &[]),
             Decoded::TaskReviewed(body) => (Some(&body.task), &[]),
             Decoded::TaskAssigned(body) => (Some(&body.task), &[]),
-            Decoded::TaskNoted(body) => (Some(&body.task), &[]),
             Decoded::TaskDeferred(body) => (Some(&body.task), &[]),
             Decoded::TaskWoken(body) => (Some(&body.task), &[]),
             Decoded::TaskFiled(body) => (Some(&body.task), &[]),

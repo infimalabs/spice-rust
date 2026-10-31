@@ -922,6 +922,9 @@ fn verify_generation_positions(
                     .fact
                     .mutated_tasks()
                     .any(|task| task.as_str() == stamp)
+                    // A retained task note stays the change to its task it was.
+                    || wire::body::RetainedTaskNote::read(&envelope.fact)
+                        .is_some_and(|note| note.task.as_str() == stamp)
             });
         if !mutated {
             violations.push(Violation::new(

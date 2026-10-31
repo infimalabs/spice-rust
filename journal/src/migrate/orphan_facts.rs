@@ -7,16 +7,22 @@
 //! still registered the provenance-less judge rulings `taste::confirmed` and
 //! `taste::cleared` and the lease warning `claim::warned`. Schema 105 and
 //! earlier still registered the Design pass critique `proposal::critiqued`,
-//! coverage `proposal::covered`, and operator nudge `proposal::nudged`. No
-//! current path writes any of them. Each retained row crosses as
-//! [`wire::body::JournalRetained`] evidence by the ordinary rule for removed
-//! fact kinds. The horizon projection, `room_horizons`, which no current reader
-//! consults, drops; a retained ruling keeps its place in the standing judgment
-//! tally, which reads it back from the retained evidence; a lease warning
-//! takes its whole steering directive with it (see [`claim_warnings`]); a
-//! critique or coverage statement, evidence that never gated a decision, drops
-//! its write-once proposal head; and a retained nudge still readies its Design
-//! through [`wire::rooms::RetainedNudge`].
+//! coverage `proposal::covered`, and operator nudge `proposal::nudged`, and
+//! schema 106 and earlier the task note `task::noted`. No current path writes
+//! any of them. Each retained row crosses as [`wire::body::JournalRetained`]
+//! evidence by the ordinary rule for removed fact kinds. The horizon
+//! projection, `room_horizons`, which no current reader consults, drops; a
+//! retained ruling keeps its place in the standing judgment tally, which reads
+//! it back from the retained evidence; a lease warning takes its whole
+//! steering directive with it (see [`claim_warnings`]); a critique or coverage
+//! statement, evidence that never gated a decision, drops its write-once
+//! proposal head; a retained nudge still readies its Design through
+//! [`wire::rooms::RetainedNudge`]; and a retained note keeps its room
+//! publication and its place in its task's generation history through
+//! [`wire::body::RetainedTaskNote`]. Later crossings that read notes, the
+//! taste-hold audits and the schema 76 room index, read the retained spelling.
+
+use wire::body::RetainedTaskNote;
 
 use super::retire::{self, COLUMNS, Retirement};
 use crate::OpenError;
@@ -39,6 +45,12 @@ const SCHEMA_104: Retirement = Retirement {
 const SCHEMA_105: Retirement = Retirement {
     release: "schema-105",
     what: "retired orphan fact",
+};
+
+/// The kind schema 106 last admitted.
+const SCHEMA_106: Retirement = Retirement {
+    release: "schema-106",
+    what: "retired task note",
 };
 
 /// Every kind retired as of [`SCHEMA_103`], with no dependent authority.
@@ -80,6 +92,7 @@ pub(super) fn cross(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenE
     retire_kinds(transaction, &SCHEMA_104_KINDS, SCHEMA_104)?;
     claim_warnings::cross(transaction, SCHEMA_104)?;
     retire_kinds(transaction, &SCHEMA_105_KINDS, SCHEMA_105)?;
+    retire_kinds(transaction, &[RetainedTaskNote::KIND], SCHEMA_106)?;
     if super::table_exists(transaction, "proposal_heads")? {
         transaction
             .execute_batch(PROPOSAL_EVIDENCE_HEADS)
