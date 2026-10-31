@@ -34,7 +34,8 @@ pub(crate) use received::{render_received_with_media_quotes, render_received_wit
 
 pub(crate) const QUOTE_ICON: &str = "<svg class=\"app-card-action__icon\" \
     width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\">\
-    <path d=\"M4 10a6 6 0 0 1 6-6v3a3 3 0 0 0-3 3h3v8H4v-8Zm10 0a6 6 0 0 1 6-6v3a3 3 0 0 0-3 3h3v8h-6v-8Z\" \
+    <path d=\"M3.5 14.75C3.5 10 5.9 6.6 9.9 5.2l.75 1.6C8.3 8 7.1 9.6 6.95 11.1A3.75 3.75 0 1 1 3.5 14.75Z\
+    M13 14.75C13 10 15.4 6.6 19.4 5.2l.75 1.6C17.8 8 16.6 9.6 16.45 11.1A3.75 3.75 0 1 1 13 14.75Z\" \
     fill=\"currentColor\" /></svg>";
 
 /// The one parser option set for authored Markdown on every surface.
